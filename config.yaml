@@ -2,7 +2,7 @@ model:
   path: /models/Qwen3-1.7B
   family: qwen3            # selects parser
   backend: transformers    # transformers | unsloth
-  dtype: bfloat16
+  dtype: float32           # bf16 is ~14x slower on Mac CPU (0.33 vs 4.64 tok/s)
   num_threads: null        # null = all available
 
 generation:
