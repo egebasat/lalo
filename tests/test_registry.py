@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agent_bot.registry import ToolRegistry, function_tool, tool
+from agent_bot.registry import Tool, ToolError, ToolRegistry, function_tool, tool
 
 
 @tool
@@ -108,3 +108,40 @@ def test_disabled_tool_not_registered():
     reg = make(add, disabled=["add"])
     assert "add" not in reg
     assert reg.schemas() == []
+
+
+async def test_tool_error_passthrough():
+    async def bad() -> str:
+        raise ToolError("Tool 'x' failed: ValueError: bad")
+
+    reg = ToolRegistry()
+    reg.register(Tool("x", "", {"type": "object", "properties": {}}, bad, "python"))
+    r = await reg.call("x", {}, 5)
+    assert r.content == "Tool 'x' failed: ValueError: bad"
+    assert r.is_error
+
+
+def _t(name, origin=None):
+    async def f() -> str:
+        return name
+
+    return Tool(name, "", {"type": "object", "properties": {}}, f, "mcp", origin)
+
+
+def test_replace_origin_swaps_tools():
+    reg = ToolRegistry()
+    reg.register(_t("a", "sandbox"))
+    reg.register(_t("b"))
+    reg.replace_origin("sandbox", [_t("c", "sandbox")])
+    assert {t.name for t in reg.tools()} == {"b", "c"}
+
+
+def test_replace_origin_duplicate_leaves_registry_unchanged():
+    reg = ToolRegistry()
+    reg.register(_t("a", "sandbox"))
+    reg.register(_t("b"))
+    with pytest.raises(ValueError):
+        reg.replace_origin("sandbox", [_t("b", "sandbox")])
+    with pytest.raises(ValueError):
+        reg.replace_origin("sandbox", [_t("c", "sandbox"), _t("c", "sandbox")])
+    assert {t.name for t in reg.tools()} == {"a", "b"}

@@ -19,20 +19,23 @@ ENV_PREFIX = "AGENT__"
 class ModelConfig(BaseModel):
     path: str
     family: str = "qwen3"
-    backend: Literal["transformers", "unsloth"] = "transformers"
-    dtype: Literal["bfloat16", "float16", "float32"] = "bfloat16"
+    backend: Literal["mlx", "transformers", "unsloth"] = "mlx"
+    dtype: Literal["bfloat16", "float16", "float32"] = "float32"
     num_threads: int | None = None
 
 
 class GenerationConfig(BaseModel):
     max_new_tokens: int = 1024
     temperature: float = 0.6
+    top_p: float = 0.95
+    top_k: int = 20
     enable_thinking: bool = True
 
 
 class AgentConfig(BaseModel):
     max_iterations: int = 6
     system_prompt_file: str = "prompts/system.md"
+    local_python_tools: bool = False
 
 
 class ToolsConfig(BaseModel):
@@ -57,8 +60,15 @@ class McpServerConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
+
+
+class SandboxConfig(BaseModel):
+    host: str = "0.0.0.0"
+    port: int = 8001
+    python_tools: bool = True
+    mcp_servers: dict[str, McpServerConfig] = {}
 
 
 class LoggingConfig(BaseModel):
@@ -72,6 +82,7 @@ class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     tools: ToolsConfig = ToolsConfig()
     mcp_servers: dict[str, McpServerConfig] = {}
+    sandbox: SandboxConfig = SandboxConfig()
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 

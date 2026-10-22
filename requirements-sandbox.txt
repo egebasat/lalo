@@ -1,0 +1,11 @@
+# Tool-sandbox (Docker) dependencies. No torch; transformers is only for get_json_schema.
+mcp>=1.10
+uvicorn[standard]
+starlette
+pydantic>=2
+pyyaml
+jsonschema
+httpx
+ddgs
+trafilatura
+transformers>=4.51

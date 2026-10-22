@@ -1,4 +1,4 @@
-# Server dependencies. torch is installed separately (CPU wheel index in the Dockerfile).
+# Host dependencies. torch is optional (CPU backend only): pip install torch
 fastapi
 uvicorn[standard]
 pydantic>=2
@@ -11,3 +11,4 @@ httpx
 ddgs
 trafilatura
 mcp>=1.10
+mlx-lm>=0.32

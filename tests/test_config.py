@@ -19,8 +19,15 @@ def write_config(tmp_path: Path, mutate) -> Path:
 
 def test_loads_defaults_from_yaml():
     cfg = load_config(REPO_CONFIG, env={})
-    assert cfg.model.path == "/models/Qwen3-1.7B"
+    assert cfg.model.path == "models/Qwen3-1.7B"
     assert cfg.model.family == "qwen3"
+    assert cfg.model.backend == "mlx"
+    assert cfg.server.host == "127.0.0.1"
+    assert cfg.mcp_servers["sandbox"].url == "http://127.0.0.1:8001/mcp"
+    assert cfg.sandbox.port == 8001
+    assert cfg.sandbox.mcp_servers["local_notes"].command == "python"
+    assert cfg.sandbox.mcp_servers["fetch"].enabled is False
+    assert cfg.agent.local_python_tools is False
     assert cfg.agent.max_iterations == 6
     assert cfg.tools.timeout_s == 20
     assert cfg.tools.max_result_chars == 4000
@@ -45,3 +52,8 @@ def test_unknown_backend_rejected(tmp_path):
     path = write_config(tmp_path, lambda raw: raw["model"].update(backend="foo"))
     with pytest.raises(ValidationError):
         load_config(path, env={})
+
+
+def test_env_override_local_tools():
+    cfg = load_config(REPO_CONFIG, env={"AGENT__AGENT__LOCAL_PYTHON_TOOLS": "true"})
+    assert cfg.agent.local_python_tools is True

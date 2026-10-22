@@ -13,6 +13,10 @@ import jsonschema
 log = logging.getLogger(__name__)
 
 
+class ToolError(Exception):
+    """Raised by a tool to report a failure; its message is returned verbatim."""
+
+
 @dataclass
 class Tool:
     name: str
@@ -20,6 +24,7 @@ class Tool:
     parameters: dict
     func: Callable[..., Awaitable[str]]
     source: str
+    origin: str | None = None  # MCP server name; None for Python tools
 
 
 @dataclass
@@ -71,6 +76,18 @@ class ToolRegistry:
             raise ValueError(f"Duplicate tool name '{tool.name}'")
         self._tools[tool.name] = tool
 
+    def replace_origin(self, origin: str, tools: list[Tool]) -> None:
+        """Swap all tools of one origin for a fresh list; unchanged on a name clash."""
+        remaining = {n: t for n, t in self._tools.items() if t.origin != origin}
+        for t in tools:
+            if t.name in self.disabled:
+                log.info("Tool '%s' is disabled; not registering", t.name)
+                continue
+            if t.name in remaining:
+                raise ValueError(f"Duplicate tool name '{t.name}'")
+            remaining[t.name] = t
+        self._tools = remaining
+
     def __contains__(self, name: str) -> bool:
         return name in self._tools
 
@@ -120,6 +137,8 @@ class ToolRegistry:
             result = await asyncio.wait_for(t.func(**arguments), timeout_s)
         except asyncio.TimeoutError:
             return done(f"Tool '{name}' timed out after {timeout_s:g}s", True)
+        except ToolError as e:
+            return done(str(e), True)
         except Exception as e:
             return done(f"Tool '{name}' failed: {type(e).__name__}: {e}", True)
         return done(str(result), False)

@@ -1,46 +1,57 @@
 model:
-  path: /models/Qwen3-1.7B
-  family: qwen3            # selects parser
-  backend: transformers    # transformers | unsloth
-  dtype: float32           # bf16 is ~14x slower on Mac CPU (0.33 vs 4.64 tok/s)
-  num_threads: null        # null = all available
+  path: models/Qwen3-1.7B   # host-relative
+  family: qwen3             # selects parser
+  backend: mlx              # mlx | transformers | unsloth
+  dtype: float32            # transformers only (bf16 is ~14x slower on Mac CPU: 0.33 vs 4.64 tok/s)
+  num_threads: null         # transformers only; null = all available
 
 generation:
   max_new_tokens: 1024
   temperature: 0.6
-  enable_thinking: true    # default; GUI can override per request
+  top_p: 0.95
+  top_k: 20
+  enable_thinking: true     # default; GUI can override per request
 
 agent:
   max_iterations: 6
   system_prompt_file: prompts/system.md
+  local_python_tools: false # true = run tools.py in-process on the host (no Docker)
 
 tools:
   timeout_s: 20
   max_result_chars: 4000
   disabled: []
 
-# MCP servers. An entry with `command` runs over stdio; one with `url` uses
-# Streamable HTTP. Secrets go in .env and are referenced as ${VAR}.
-# Stdio servers only see the env vars listed under `env:`.
+# MCP servers the AGENT (host) connects to. An entry with `command` runs over
+# stdio; one with `url` uses Streamable HTTP. Secrets go in .env and are
+# referenced as ${VAR}. Stdio servers only see the env vars listed under `env:`.
 mcp_servers:
-  local_notes:
-    command: python
-    args: ["-m", "mcp_servers.notes_server"]
-    env: { NOTES_FILE: "${NOTES_FILE}" }
-    enabled: true
-  fetch:
-    command: uvx
-    args: ["mcp-server-fetch"]
-    enabled: false
-  some_remote:                 # example shape, disabled
-    url: https://example.com/mcp
-    headers: { Authorization: "Bearer ${SOME_API_KEY}" }
-    enabled: false
+  sandbox:
+    url: http://127.0.0.1:8001/mcp
+
+# What the TOOL SERVER (container) runs.
+sandbox:
+  host: 0.0.0.0
+  port: 8001
+  python_tools: true
+  mcp_servers:
+    local_notes:
+      command: python
+      args: ["-m", "mcp_servers.notes_server"]
+      env: { NOTES_FILE: "${NOTES_FILE}" }
+    fetch:
+      command: uvx
+      args: ["mcp-server-fetch"]
+      enabled: false
+    some_remote:                 # example shape, disabled
+      url: https://example.com/mcp
+      headers: { Authorization: "Bearer ${SOME_API_KEY}" }
+      enabled: false
 
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8000
 
 logging:
   level: INFO
-  trace_dir: /data/traces   # null disables
+  trace_dir: data/traces   # null disables
