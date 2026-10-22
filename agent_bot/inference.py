@@ -1,11 +1,13 @@
-"""Model inference backends. Heavy libraries (torch, transformers) are imported lazily."""
+"""Model inference backends. Heavy libraries (torch, transformers, mlx_lm) are imported lazily."""
 
+import queue
 import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol
 
-from agent_bot.config import ModelConfig
+from agent_bot.config import GenerationConfig, ModelConfig
 
 
 class Backend(Protocol):
@@ -107,7 +109,89 @@ class TransformersBackend:
             self.last_token_count = result["ids"].shape[1] - prompt_len
 
 
-def create_backend(cfg: ModelConfig) -> Backend:
+class MLXBackend:
+    """Runs on the Apple GPU via mlx-lm.
+
+    MLX keeps GPU streams per thread, so one single-worker executor owns the model load
+    and every generation; the caller's thread only reads from a queue.
+    """
+
+    def __init__(self, cfg: ModelConfig, top_p: float = 0.95, top_k: int = 20):
+        self._cfg = cfg
+        self._top_p = top_p
+        self._top_k = top_k
+        self.last_token_count = 0
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+        self._executor.submit(self._load).result()
+
+    def _load(self) -> None:
+        import mlx_lm  # lazy, and on the MLX thread
+
+        self.model, self.tokenizer = mlx_lm.load(self._cfg.path)
+
+    @property
+    def model_family(self) -> str:
+        return self._cfg.family
+
+    @property
+    def model_name(self) -> str:
+        return Path(self._cfg.path).name
+
+    def render_prompt(self, messages: list[dict], tools: list[dict], *, enable_thinking: bool) -> str:
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tools=tools or None,
+            add_generation_prompt=True,
+            enable_thinking=enable_thinking,
+            tokenize=False,
+        )
+
+    def generate(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        enable_thinking: bool,
+        max_new_tokens: int,
+        temperature: float,
+    ) -> Iterator[str]:
+        prompt = self.render_prompt(messages, tools, enable_thinking=enable_thinking)
+        chunks: queue.Queue = queue.Queue()
+        done = object()  # sentinel: the producer finished cleanly
+
+        def produce() -> None:
+            try:
+                import mlx_lm
+                from mlx_lm.sample_utils import make_sampler
+
+                self.last_token_count = 0
+                sampler = make_sampler(temp=temperature, top_p=self._top_p, top_k=self._top_k)
+                tokens = 0
+                for response in mlx_lm.stream_generate(
+                    self.model, self.tokenizer, prompt, max_tokens=max_new_tokens, sampler=sampler
+                ):
+                    tokens = response.generation_tokens
+                    if response.text:
+                        chunks.put(response.text)
+                self.last_token_count = tokens
+                chunks.put(done)
+            except BaseException as exc:
+                chunks.put(exc)  # re-raised in the caller; never leaves it blocked
+
+        self._executor.submit(produce)
+        while True:
+            item = chunks.get()
+            if item is done:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+
+def create_backend(cfg: ModelConfig, gen: GenerationConfig | None = None) -> Backend:
     if cfg.backend == "unsloth":
         raise NotImplementedError("unsloth backend not implemented yet — see plan §11")
+    if cfg.backend == "mlx":
+        gen = gen or GenerationConfig()
+        return MLXBackend(cfg, gen.top_p, gen.top_k)
     return TransformersBackend(cfg)

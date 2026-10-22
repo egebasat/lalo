@@ -12,12 +12,15 @@ def main() -> None:
     parser.add_argument("prompt")
     parser.add_argument("--config", default=None)
     parser.add_argument("--model-path", default=None)
+    parser.add_argument("--backend", choices=["mlx", "transformers"], default=None)
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     if args.model_path:
         cfg.model.path = args.model_path
-    backend = create_backend(cfg.model)
+    if args.backend:
+        cfg.model.backend = args.backend
+    backend = create_backend(cfg.model, cfg.generation)
 
     start = time.perf_counter()
     for chunk in backend.generate(
