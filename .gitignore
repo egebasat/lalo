@@ -20,3 +20,6 @@ venv/
 
 # superpowers execution workspace
 .superpowers/
+
+# Claude Code agent worktrees
+.claude/worktrees/
