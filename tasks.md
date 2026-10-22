@@ -14,10 +14,10 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | 6 | Revision-2 amendments (config, registry, requirements) | `mlx` is the default backend, the sandbox config exists, `ToolError` and `replace_origin` work | ✅ | `52ab355` |
 | 7 | MLX backend on the Apple GPU | `scripts/generate.py` streams from MLX at tens of tok/s (measured 40–47) | ✅ | `965f24b` |
 | 8 | Events and traces | Event types serialize to NDJSON; each turn writes a JSONL trace | ✅ | `afced78` |
-| 9 | Agent loop + CLI | `python -m agent_bot.cli "…"` — the real model calls `get_weather` and answers | ⏳ | |
-| 10 | Agent server on the host | `curl -N` shows the event stream from `/chat` | ⬜ | |
+| 9 | Agent loop + CLI | `python -m agent_bot.cli "…"` — the real model calls `get_weather` and answers | ✅ | `bcf55f6` |
+| 10 | Agent server on the host | `curl -N` shows the event stream from `/chat` | ⏳ | |
 | 11 | tkinter GUI | A full turn shows all event kinds (thinking, tool call, tool result, answer, error) | ⬜ | |
-| 12 | MCP client + notes server | "Save a note that I like tea" and then "what notes do I have?" works | ⬜ | |
+| 12 | MCP client + notes server | "Save a note that I like tea" and then "what notes do I have?" works | ✅ | `fd5f240`, `42c4956` |
 | 13 | Tool sandbox (tool server + Docker) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn | ⬜ | |
 | 14 | Reliability eval + tuning | At least 4 of 5 eval prompts pass in at least 2 of 3 runs | ⬜ | |
 | 15 | README, smoke test, polish | Setup and customization docs, measured speeds, and a manual GUI checklist | ⬜ | |
