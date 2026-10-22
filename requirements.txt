@@ -10,5 +10,5 @@ jsonschema
 httpx
 ddgs
 trafilatura
-mcp>=1.10
+mcp>=2,<3
 mlx-lm>=0.32
