@@ -96,3 +96,20 @@ def test_missing_name():
 def test_unknown_family():
     with pytest.raises(ValueError, match="No parser for model family 'gemma'"):
         get_parser("gemma")
+
+
+def test_unclosed_tool_call():
+    out = p.parse('<tool_call>\n{"name": "a", "argu')
+    assert out.tool_calls == []
+    assert out.content == ""
+    assert len(out.parse_errors) == 1
+    assert "unclosed <tool_call>" in out.parse_errors[0]
+
+
+def test_valid_call_kept_before_unclosed_call():
+    raw = _call('{"name": "a", "arguments": {}}') + '\n<tool_call>\n{"name": "b'
+    out = p.parse(raw)
+    assert [c.name for c in out.tool_calls] == ["a"]
+    assert out.content == ""
+    assert len(out.parse_errors) == 1
+    assert out.parse_errors[0].startswith("unclosed <tool_call>")

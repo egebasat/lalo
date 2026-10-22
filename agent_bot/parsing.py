@@ -39,7 +39,12 @@ class Qwen3Parser:
             call = self._parse_call(match.group(1), index, errors)
             if call is not None:
                 calls.append(call)
-        content = _TOOL_CALL_RE.sub("", text).strip()
+        content = _TOOL_CALL_RE.sub("", text)
+        if "<tool_call>" in content:
+            # Truncated generation: drop the fragment but report it.
+            content = content.split("<tool_call>", 1)[0]
+            errors.append("unclosed <tool_call> tag (output truncated?)")
+        content = content.strip()
 
         return ParsedOutput(
             thinking=thinking or None,
