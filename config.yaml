@@ -1,0 +1,46 @@
+model:
+  path: /models/Qwen3-1.7B
+  family: qwen3            # selects parser
+  backend: transformers    # transformers | unsloth
+  dtype: bfloat16
+  num_threads: null        # null = all available
+
+generation:
+  max_new_tokens: 1024
+  temperature: 0.6
+  enable_thinking: true    # default; GUI can override per request
+
+agent:
+  max_iterations: 6
+  system_prompt_file: prompts/system.md
+
+tools:
+  timeout_s: 20
+  max_result_chars: 4000
+  disabled: []
+
+# MCP servers. An entry with `command` runs over stdio; one with `url` uses
+# Streamable HTTP. Secrets go in .env and are referenced as ${VAR}.
+# Stdio servers only see the env vars listed under `env:`.
+mcp_servers:
+  local_notes:
+    command: python
+    args: ["-m", "mcp_servers.notes_server"]
+    env: { NOTES_FILE: "${NOTES_FILE}" }
+    enabled: true
+  fetch:
+    command: uvx
+    args: ["mcp-server-fetch"]
+    enabled: false
+  some_remote:                 # example shape, disabled
+    url: https://example.com/mcp
+    headers: { Authorization: "Bearer ${SOME_API_KEY}" }
+    enabled: false
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+logging:
+  level: INFO
+  trace_dir: /data/traces   # null disables

@@ -1,0 +1,13 @@
+# Server dependencies. torch is installed separately (CPU wheel index in the Dockerfile).
+fastapi
+uvicorn[standard]
+pydantic>=2
+pyyaml
+transformers>=4.51
+accelerate
+huggingface_hub
+jsonschema
+httpx
+ddgs
+trafilatura
+mcp>=1.10
