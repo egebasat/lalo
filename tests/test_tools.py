@@ -53,6 +53,29 @@ def test_calculator_thousands_separator():
         calculator("0.175 * 2,340")
 
 
+def test_calculator_rejects_huge_round_digits():
+    with pytest.raises(ValueError, match="round"):
+        calculator("round(1, -99999999)")
+
+
+def test_calculator_rejects_nested_exponents():
+    for expr in ("(((9**100)**100)**100)", "(((((9**100)**100)**100)**100)**100)"):
+        with pytest.raises(ValueError, match="too large"):
+            calculator(expr)
+
+
+def test_calculator_overflow_is_value_error():
+    for expr in ("1e308*10", "1e200**100"):
+        with pytest.raises(ValueError):
+            calculator(expr)
+
+
+def test_calculator_bad_call_is_value_error():
+    for expr in ("round(5, 1.5)", "abs()"):
+        with pytest.raises(ValueError):
+            calculator(expr)
+
+
 def test_time_tokyo():
     out = get_current_time("Asia/Tokyo")
     assert "Asia/Tokyo" in out

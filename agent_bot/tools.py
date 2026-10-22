@@ -155,20 +155,44 @@ _UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 _FUNCS = {"sqrt": math.sqrt, "abs": abs, "round": round}
 
 
+_MAX_BITS = 4000
+_TOO_LARGE = "Result too large"
+
+
+def _check(value):
+    """Reject results that are huge or non-finite."""
+    if isinstance(value, int) and value.bit_length() > _MAX_BITS:
+        raise ValueError(_TOO_LARGE)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(_TOO_LARGE)
+    return value
+
+
+def _is_int(x) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
 def _eval(node: ast.AST):
     if (isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
             and not isinstance(node.value, bool)):
-        return node.value
+        return _check(node.value)
     if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
         left, right = _eval(node.left), _eval(node.right)
-        if isinstance(node.op, ast.Pow) and abs(right) > 100:
-            raise ValueError("Exponent too large (max 100)")
-        return _BIN_OPS[type(node.op)](left, right)
+        if isinstance(node.op, ast.Pow):
+            if abs(right) > 100:
+                raise ValueError("Exponent too large (max 100)")
+            if _is_int(left) and _is_int(right) and left.bit_length() * abs(right) > _MAX_BITS:
+                raise ValueError(_TOO_LARGE)
+        return _check(_BIN_OPS[type(node.op)](left, right))
     if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
-        return _UNARY_OPS[type(node.op)](_eval(node.operand))
+        return _check(_UNARY_OPS[type(node.op)](_eval(node.operand)))
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             and node.func.id in _FUNCS and not node.keywords):
-        return _FUNCS[node.func.id](*[_eval(a) for a in node.args])
+        args = [_eval(a) for a in node.args]
+        if node.func.id == "round" and len(args) == 2 and not (
+                _is_int(args[1]) and abs(args[1]) <= 15):
+            raise ValueError("round() digits must be a whole number between -15 and 15")
+        return _check(_FUNCS[node.func.id](*args))
     if isinstance(node, ast.Tuple):
         raise ValueError("Write numbers without thousands separators, e.g. 2340 not 2,340")
     raise ValueError(f"Unsupported expression: {type(node).__name__}")
@@ -189,9 +213,13 @@ def calculator(expression: str) -> str:
         result = _eval(tree.body)
     except ZeroDivisionError:
         raise ValueError("Division by zero")
+    except OverflowError:
+        raise ValueError(_TOO_LARGE)
+    except TypeError as exc:
+        raise ValueError(f"Invalid expression: {exc}")
     if isinstance(result, float):
         result = round(result, 10)
-        if result == int(result):
+        if math.isfinite(result) and result == int(result):
             result = int(result)
     return str(result)
 
