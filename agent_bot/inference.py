@@ -75,6 +75,7 @@ class TransformersBackend:
 
         prompt = self.render_prompt(messages, tools, enable_thinking=enable_thinking)
         with self._lock:
+            self.last_token_count = 0
             inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
             prompt_len = inputs["input_ids"].shape[1]
             streamer = TextIteratorStreamer(self._tokenizer, skip_prompt=True, skip_special_tokens=True)
@@ -89,7 +90,11 @@ class TransformersBackend:
             result: dict = {}
 
             def run() -> None:
-                result["ids"] = self._model.generate(**kwargs)
+                try:
+                    result["ids"] = self._model.generate(**kwargs)
+                except BaseException as exc:
+                    result["error"] = exc
+                    streamer.end()  # unblock the consumer; the error is re-raised below
 
             thread = threading.Thread(target=run, daemon=True)
             thread.start()
@@ -97,7 +102,9 @@ class TransformersBackend:
                 yield from streamer
             finally:
                 thread.join()
-            self.last_token_count = result["ids"].shape[1] - prompt_len if "ids" in result else 0
+            if "error" in result:
+                raise result["error"]
+            self.last_token_count = result["ids"].shape[1] - prompt_len
 
 
 def create_backend(cfg: ModelConfig) -> Backend:
