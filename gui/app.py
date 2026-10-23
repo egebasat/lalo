@@ -21,6 +21,11 @@ from tkinter import scrolledtext
 
 import requests
 
+try:
+    from gui import renderer
+except ImportError:  # run as a script (python gui/app.py): gui/ itself is on sys.path
+    import renderer
+
 AGENT_URL = os.environ.get("AGENT_URL", "http://127.0.0.1:8000").rstrip("/")
 MAX_RESULT_LINES = 15
 POLL_MS = 50
@@ -91,7 +96,7 @@ class App:
         self.inbox: queue.Queue = queue.Queue()  # (kind, payload) from worker threads
         self.in_flight = 0  # /chat requests still open; the timer runs while > 0
         self.busy_since = 0.0
-        self.loaded = False
+        self.images: list = []  # formula images in the transcript; Tk needs them referenced
 
         root.title("agent_bot")
         root.geometry("900x700")
@@ -128,6 +133,7 @@ class App:
         }
         for tag, style in styles.items():
             self.transcript.tag_configure(tag, **style)
+        renderer.configure_tags(self.transcript, "Helvetica", 13, "Menlo")
 
         bottom = tk.Frame(self.root, padx=8, pady=8)
         bottom.pack(fill="x")
@@ -165,7 +171,18 @@ class App:
             self._append([(event.get("text", ""), "live")])
             return
         self._clear_live()
-        self._append(render_event(event))
+        if event.get("type") == "answer":
+            self._append_answer(event.get("text", ""))
+        else:
+            self._append(render_event(event))
+
+    def _append_answer(self, text: str) -> None:
+        """Answers get Markdown and LaTeX rendering; every other event stays plain."""
+        self.transcript.configure(state="normal")
+        renderer.insert_markdown(self.transcript, text, "answer", self.images)
+        self.transcript.insert("end", "\n", "answer")
+        self.transcript.configure(state="disabled")
+        self.transcript.see("end")
 
     # --- actions (main thread) ----------------------------------------------------
 
@@ -189,6 +206,7 @@ class App:
         self.transcript.configure(state="normal")
         self.transcript.delete("1.0", "end")
         self.transcript.configure(state="disabled")
+        self.images.clear()
         threading.Thread(target=self._post_quietly, args=("/reset", {"session_id": old}),
                          daemon=True).start()
 
