@@ -15,8 +15,8 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | 7 | MLX backend on the Apple GPU | `scripts/generate.py` streams from MLX at tens of tok/s (measured 40–47) | ✅ | `965f24b` |
 | 8 | Events and traces | Event types serialize to NDJSON; each turn writes a JSONL trace | ✅ | `afced78` |
 | 9 | Agent loop + CLI | `python -m agent_bot.cli "…"` — the real model calls a tool and answers | ✅ | `bcf55f6` |
-| 10 | Agent server on the host | `curl -N` shows the event stream from `/chat` | ⏳ | |
-| 11 | tkinter GUI | A full turn shows all event kinds (thinking, tool call, tool result, answer, error) | ⬜ | |
+| 10 | Agent server on the host | `curl -N` shows the event stream from `/chat` | ✅ | `3a2bc14` |
+| 11 | tkinter GUI | A full turn shows all event kinds (thinking, tool call, tool result, answer, error) | ✅ | `0d2e39e` |
 | 12 | MCP client + notes server | "Save a note that I like tea" and then "what notes do I have?" works | ✅ | `fd5f240`, `42c4956` |
 | 13 | Tool sandbox (tool server + Docker, headless Chromium) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn; `fetch_page` reads JavaScript-only pages | ⬜ | |
 | 14 | Reliability eval + tuning | At least 4 of 5 eval prompts pass in at least 2 of 3 runs | ⬜ | |
@@ -30,4 +30,5 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | Qwen3-1.7B, CPU, bf16 | 0.33 tok/s |
 | Qwen3-1.7B, CPU, float32 | 4.6 tok/s |
 | Qwen3-1.7B, MLX on the GPU | 38 tok/s on the first call, 47 tok/s once warmed up |
+| Agent server, real model, "17.5% of 2340" | calculator called, 409.5 correct, 2 iterations, 12.2 s, 488 tokens |
 | Tool choice (5 prompts, CPU, thinking off, 1 run) | 5/5 correct tool; the answer to "17.5% of 2,340" was wrong (40,950 instead of 409.5) |
