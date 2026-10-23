@@ -11,23 +11,6 @@ import httpx
 
 from agent_bot.registry import ToolRegistry, function_tool, tool
 
-_WMO = {
-    0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
-    45: "fog", 48: "rime fog",
-    51: "light drizzle", 53: "drizzle", 55: "heavy drizzle",
-    56: "freezing drizzle", 57: "heavy freezing drizzle",
-    61: "light rain", 63: "rain", 65: "heavy rain",
-    66: "freezing rain", 67: "heavy freezing rain",
-    71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains",
-    80: "light rain showers", 81: "rain showers", 82: "violent rain showers",
-    85: "light snow showers", 86: "heavy snow showers",
-    95: "thunderstorm", 96: "thunderstorm with hail", 99: "severe thunderstorm with hail",
-}
-
-
-def _wmo(code: int) -> str:
-    return _WMO.get(code, f"weather code {code}")
-
 
 @tool
 def web_search(query: str, max_results: int = 5) -> str:
@@ -69,64 +52,6 @@ def fetch_page(url: str, max_chars: int = 4000) -> str:
     if text is None:
         raise ValueError(f"Could not extract readable text from {url}")
     return text[:max_chars]
-
-
-def _geocode(name: str) -> dict | None:
-    resp = httpx.get(
-        "https://geocoding-api.open-meteo.com/v1/search",
-        params={"name": name, "count": 1},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    results = resp.json().get("results") or []
-    return results[0] if results else None
-
-
-@tool
-def get_weather(location: str, days: int = 1) -> str:
-    """Get the current weather and a daily forecast for a city.
-
-    Args:
-        location: City name, e.g. 'Istanbul' or 'Paris'.
-        days: Number of days to forecast, 1-16. Use 2 or more to include tomorrow.
-    """
-    if not 1 <= days <= 16:
-        raise ValueError("days must be between 1 and 16")
-    place = _geocode(location)
-    if place is None and "," in location:
-        place = _geocode(location.split(",", 1)[0].strip())
-    if place is None:
-        raise ValueError(f"Location '{location}' not found")
-
-    resp = httpx.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": place["latitude"],
-            "longitude": place["longitude"],
-            "current": "temperature_2m,weather_code,wind_speed_10m",
-            "daily": "temperature_2m_max,temperature_2m_min,"
-                     "precipitation_probability_max,weather_code",
-            "timezone": "auto",
-            "forecast_days": days,
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    cur, daily = data["current"], data["daily"]
-
-    lines = [
-        f"Weather for {place['name']}, {place.get('country', '')}",
-        f"Now: {cur['temperature_2m']}°C, {_wmo(cur['weather_code'])}, "
-        f"wind {cur['wind_speed_10m']} km/h",
-    ]
-    for i, date in enumerate(daily["time"]):
-        lines.append(
-            f"{date}: {daily['temperature_2m_min'][i]}°C to {daily['temperature_2m_max'][i]}°C, "
-            f"rain {daily['precipitation_probability_max'][i]}%, "
-            f"{_wmo(daily['weather_code'][i])}"
-        )
-    return "\n".join(lines)
 
 
 @tool

@@ -1,6 +1,6 @@
 """Run one agent turn from the terminal and print every event as it happens.
 
-    python -m agent_bot.cli "What's the weather in Istanbul tomorrow?" [--no-thinking]
+    python -m agent_bot.cli "What time is it in Tokyo?" [--no-thinking]
         [--model-path P] [--backend mlx|transformers|unsloth]
 
 Python tools run in-process here; the sandboxed setup is wired in by the server.
