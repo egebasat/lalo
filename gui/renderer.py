@@ -233,8 +233,44 @@ class _Builder:
                 self.styles.pop()
 
 
+_FENCE_LINE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})[ \t]*([\w+-]*)")
+
+
+def _closes(match: re.Match, fence: str) -> bool:
+    """A bare fence line of the same character, at least as long, closes `fence`."""
+    marker, info = match[1], match[2]
+    return not info and marker[0] == fence[0] and len(marker) >= len(fence)
+
+
+def _unwrap_markdown_fences(text: str) -> str:
+    """Drop the fence lines around ```markdown / ```md blocks so their content renders.
+
+    Models often wrap a whole report in one, which would otherwise show it all as raw
+    code. Code blocks inside it stay code; an unclosed one runs to the end. A bare
+    ``` opening a block inside the report is read as the report's end (ambiguous).
+    """
+    out: list[str] = []
+    md_fence: str | None = None  # fence that opened the markdown block
+    code_fence: str | None = None  # fence of an ordinary code block currently open
+    for line in text.split("\n"):
+        m = _FENCE_LINE.match(line)
+        if m and code_fence is not None:
+            if _closes(m, code_fence):
+                code_fence = None
+        elif m and md_fence is not None and _closes(m, md_fence):
+            md_fence = None
+            continue
+        elif m and md_fence is None and m[2].lower() in ("markdown", "md"):
+            md_fence = m[1]
+            continue
+        elif m:
+            code_fence = m[1]
+        out.append(line)
+    return "\n".join(out)
+
+
 def parse_markdown(text: str) -> list[Segment]:
-    protected, formulas = _protect_math(text)
+    protected, formulas = _protect_math(_unwrap_markdown_fences(text))
     return _Builder(formulas).walk(_MD.parse(protected))
 
 

@@ -204,3 +204,35 @@ def test_display_math_has_one_blank_line_each_side():
     finally:
         root.destroy()
 
+
+# Models often "show" a report by wrapping it in a ```markdown fence (trace
+# 20261023-133723); the fence is presentation, so its content is rendered.
+@pytest.mark.parametrize("info", ["markdown", "md", "Markdown"])
+def test_markdown_fence_is_rendered_not_shown_as_code(info):
+    text = f"Here's the report:\n\n```{info}\n# Title\n\n- **bold** item with $ x $\n```\n\nDone."
+    segs = parse_markdown(text)
+    assert not [s for s in segs if isinstance(s, Span) and "code_block" in s.tags]
+    assert ("Title", ("h1",)) in spans(segs)
+    assert ("bold", ("li1", "strong")) in spans(segs)
+    assert [m.latex for m in maths(segs)] == ["x"]
+    assert "Done." in text_of(segs)
+
+
+def test_code_fences_inside_markdown_fence_stay_code():
+    text = "```markdown\n## Example\n\n```python\nprint(1)\n```\n\nAfter the code.\n```"
+    segs = parse_markdown(text)
+    assert ("print(1)\n", ("code_block",)) in [(s.text, s.tags) for s in segs
+                                                 if isinstance(s, Span)]
+    assert ("Example", ("h2",)) in spans(segs)
+    assert "After the code." in text_of(segs)
+
+
+def test_unclosed_markdown_fence_is_still_rendered():
+    segs = parse_markdown("```markdown\n# Cut off\n\nSome **text**")
+    assert ("Cut off", ("h1",)) in spans(segs)
+    assert ("text", ("strong",)) in spans(segs)
+
+
+def test_other_fences_stay_code():
+    segs = parse_markdown("```python\n# not a heading\n```")
+    assert [s.tags for s in segs if isinstance(s, Span)] == [("code_block",)]
