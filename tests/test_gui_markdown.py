@@ -187,13 +187,14 @@ def test_display_math_has_one_blank_line_each_side():
     tk = pytest.importorskip("tkinter")
     pytest.importorskip("matplotlib")
     from gui.renderer import configure_tags, insert_markdown
+    from gui.theme import DARK
     try:
         root = tk.Tk()
     except tk.TclError:
         pytest.skip("no display")
     try:
         text = tk.Text(root)
-        configure_tags(text, "Helvetica", 13, "Menlo")
+        configure_tags(text, "Helvetica", 13, "Menlo", DARK)
         images: list = []
         insert_markdown(text, "Before:\n\n\\[x^2\\]\n\nAfter.", "answer", images)
         flat = "".join("<img>" if kind == "image" else value
@@ -202,3 +203,4 @@ def test_display_math_has_one_blank_line_each_side():
         assert len(images) == 1
     finally:
         root.destroy()
+

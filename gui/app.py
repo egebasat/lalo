@@ -23,8 +23,10 @@ import requests
 
 try:
     from gui import renderer
+    from gui.theme import DARK as C
 except ImportError:  # run as a script (python gui/app.py): gui/ itself is on sys.path
     import renderer
+    from theme import DARK as C
 
 AGENT_URL = os.environ.get("AGENT_URL", "http://127.0.0.1:8000").rstrip("/")
 MAX_RESULT_LINES = 15
@@ -88,6 +90,46 @@ def _http_error(resp: requests.Response) -> dict:
     return {"type": "error", "message": f"HTTP {resp.status_code}: {detail}"}
 
 
+def _use_dark_theme(root: tk.Tk) -> None:
+    """Dark regardless of the system setting.
+
+    On macOS, native widgets (title bar, buttons, checkbox, scrollbars) follow the
+    window's appearance, so force darkaqua. Everything else takes the option database
+    defaults below, which also cover windows opened later (the Tools window).
+    """
+    if root.tk.call("tk", "windowingsystem") == "aqua":
+        try:
+            root.tk.call("::tk::unsupported::MacWindowStyle", "appearance", root, "darkaqua")
+        except tk.TclError:  # Tk older than 8.6.10
+            pass
+    root.configure(background=C["bg"])
+    for pattern, color in [("*Background", C["bg"]), ("*Foreground", C["fg"]),
+                           ("*selectBackground", C["select_bg"]),
+                           ("*selectForeground", C["fg"]),
+                           ("*insertBackground", C["fg"]),
+                           ("*highlightBackground", C["bg"]),
+                           ("*activeBackground", C["surface"]),
+                           ("*activeForeground", C["fg"]),
+                           ("*selectColor", C["surface"])]:
+        root.option_add(pattern, color)
+
+
+def _button(parent: tk.Widget, text: str, command) -> tk.Label:
+    """A flat button drawn as a Label, because macOS draws tk.Button natively and ignores
+    its background color. Clicks fire on release inside the button, like a real one."""
+    button = tk.Label(parent, text=text, foreground=C["accent"], background=C["button_bg"],
+                      font=("Helvetica", 13, "bold"), padx=12, pady=4, cursor="hand2")
+
+    def release(event) -> None:
+        if 0 <= event.x < button.winfo_width() and 0 <= event.y < button.winfo_height():
+            command()
+
+    button.bind("<Enter>", lambda _e: button.configure(background=C["button_hover"]))
+    button.bind("<Leave>", lambda _e: button.configure(background=C["button_bg"]))
+    button.bind("<ButtonRelease-1>", release)
+    return button
+
+
 class App:
     def __init__(self, root: tk.Tk, url: str = AGENT_URL):
         self.root = root
@@ -100,6 +142,7 @@ class App:
 
         root.title("agent_bot")
         root.geometry("900x700")
+        _use_dark_theme(root)
         self._build()
         threading.Thread(target=self._watch_health, daemon=True).start()
         root.after(POLL_MS, self._poll)
@@ -113,37 +156,46 @@ class App:
         tk.Label(top, textvariable=self.status, anchor="w").pack(side="left", fill="x", expand=True)
         self.thinking = tk.BooleanVar(value=True)
         tk.Checkbutton(top, text="Thinking", variable=self.thinking).pack(side="left")
-        tk.Button(top, text="New chat", command=self._new_chat).pack(side="left", padx=4)
-        tk.Button(top, text="Tools", command=self._open_tools).pack(side="left")
+        self.buttons = {
+            "New chat": _button(top, "New chat", lambda: self._new_chat()),
+            "Tools": _button(top, "Tools", lambda: self._open_tools()),
+        }
+        self.buttons["New chat"].pack(side="left", padx=6)
+        self.buttons["Tools"].pack(side="left")
 
-        self.transcript = scrolledtext.ScrolledText(self.root, wrap="word", state="disabled",
-                                                    padx=8, pady=8, font=("Helvetica", 13))
+        self.transcript = scrolledtext.ScrolledText(
+            self.root, wrap="word", state="disabled", padx=8, pady=8, font=("Helvetica", 13),
+            background=C["bg"], foreground=C["fg"], highlightthickness=0, borderwidth=0)
         self.transcript.pack(fill="both", expand=True, padx=8)
         mono = ("Menlo", 12)
         styles = {
-            "user": {"font": ("Helvetica", 13, "bold"), "spacing1": 10},
-            "thinking": {"foreground": "#888888", "font": ("Helvetica", 12, "italic")},
-            "tool_call": {"foreground": "#1f5fbf", "font": mono},
-            "tool_result": {"foreground": "#2e7d32", "font": mono},
-            "tool_error": {"foreground": "#c62828", "font": mono},
+            "user": {"foreground": C["user"], "font": ("Helvetica", 13, "bold"), "spacing1": 10},
+            "thinking": {"foreground": C["muted"], "font": ("Helvetica", 12, "italic")},
+            "tool_call": {"foreground": C["tool_call"], "font": mono},
+            "tool_result": {"foreground": C["tool_result"], "font": mono},
+            "tool_error": {"foreground": C["error"], "font": mono},
             "answer": {"spacing1": 4},
-            "error": {"foreground": "#c62828", "font": ("Helvetica", 13, "bold")},
-            "meta": {"foreground": "#999999", "font": ("Helvetica", 11)},
-            "live": {"foreground": "#aaaaaa", "font": mono},
+            "error": {"foreground": C["error"], "font": ("Helvetica", 13, "bold")},
+            "meta": {"foreground": C["meta"], "font": ("Helvetica", 11)},
+            "live": {"foreground": C["live"], "font": mono},
         }
         for tag, style in styles.items():
             self.transcript.tag_configure(tag, **style)
-        renderer.configure_tags(self.transcript, "Helvetica", 13, "Menlo")
+        renderer.configure_tags(self.transcript, "Helvetica", 13, "Menlo", C)
 
         bottom = tk.Frame(self.root, padx=8, pady=8)
         bottom.pack(fill="x")
-        self.input = tk.Text(bottom, height=3, wrap="word", font=("Helvetica", 13))
+        self.input = tk.Text(bottom, height=3, wrap="word", font=("Helvetica", 13),
+                             background=C["surface"], padx=6, pady=4, borderwidth=0,
+                             highlightthickness=1, highlightbackground=C["surface"],
+                             highlightcolor=C["select_bg"])
         self.input.pack(side="left", fill="x", expand=True)
         side = tk.Frame(bottom)
         side.pack(side="left", padx=(8, 0))
-        tk.Button(side, text="Send", command=self._send).pack()
+        self.buttons["Send"] = _button(side, "Send", lambda: self._send())
+        self.buttons["Send"].pack()
         self.elapsed = tk.StringVar(value="")
-        tk.Label(side, textvariable=self.elapsed, foreground="#888888").pack()
+        tk.Label(side, textvariable=self.elapsed, foreground=C["muted"]).pack()
         for key in ("<Command-Return>", "<Control-Return>"):
             self.input.bind(key, lambda _e: (self._send(), "break")[1])
         self.input.focus_set()

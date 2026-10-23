@@ -300,23 +300,27 @@ def render_math(latex: str, display: bool, color: str, fontsize: float = 13,
 
 # --- Tk side --------------------------------------------------------------------------
 
-def configure_tags(widget, family: str, size: int, mono: str) -> None:
-    """Create the md_* tags. Call after the widget's other tags so these fonts win."""
+def configure_tags(widget, family: str, size: int, mono: str, colors: dict) -> None:
+    """Create the md_* tags. Call after the widget's other tags so these fonts win.
+
+    `colors` is the GUI palette (gui/theme.py).
+    """
     styles = {
         "md_b": {"font": (family, size, "bold")},
         "md_i": {"font": (family, size, "italic")},
         "md_bi": {"font": (family, size, "bold italic")},
-        "md_code": {"font": (mono, size - 1), "background": "#eeeeee", "foreground": "#333333"},
-        "md_code_block": {"font": (mono, size - 1), "background": "#f4f4f4",
-                          "foreground": "#333333", "lmargin1": 12, "lmargin2": 12},
+        "md_code": {"font": (mono, size - 1), "background": colors["code_bg"],
+                    "foreground": colors["code_fg"]},
+        "md_code_block": {"font": (mono, size - 1), "background": colors["code_block_bg"],
+                          "foreground": colors["code_fg"], "lmargin1": 12, "lmargin2": 12},
         "md_table": {"font": (mono, size - 1), "lmargin1": 8, "lmargin2": 8},
         "md_h1": {"font": (family, size + 6, "bold"), "spacing1": 6, "spacing3": 2},
         "md_h2": {"font": (family, size + 4, "bold"), "spacing1": 4, "spacing3": 2},
         "md_h3": {"font": (family, size + 2, "bold"), "spacing1": 2},
         "md_strike": {"overstrike": True},
-        "md_link": {"foreground": "#1f5fbf", "underline": True},
-        "md_quote": {"foreground": "#666666", "lmargin1": 16, "lmargin2": 16},
-        "md_hr": {"foreground": "#bbbbbb"},
+        "md_link": {"foreground": colors["link"], "underline": True},
+        "md_quote": {"foreground": colors["quote"], "lmargin1": 16, "lmargin2": 16},
+        "md_hr": {"foreground": colors["hr"]},
         "md_display": {"justify": "center", "spacing1": 4, "spacing3": 4},
     }
     for depth in range(1, 7):
