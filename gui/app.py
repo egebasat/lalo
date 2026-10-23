@@ -196,8 +196,10 @@ class App:
         self.buttons["Send"].pack()
         self.elapsed = tk.StringVar(value="")
         tk.Label(side, textvariable=self.elapsed, foreground=C["muted"]).pack()
-        for key in ("<Command-Return>", "<Control-Return>"):
+        # Enter sends; Shift+Enter falls through to Tk's default and inserts a newline.
+        for key in ("<Return>", "<KP_Enter>", "<Command-Return>", "<Control-Return>"):
             self.input.bind(key, lambda _e: (self._send(), "break")[1])
+        self.input.bind("<Shift-Return>", lambda _e: None)
         self.input.focus_set()
 
     # --- transcript ---------------------------------------------------------------

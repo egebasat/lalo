@@ -108,3 +108,31 @@ def test_button_click_runs_command(root):
     button.event_generate("<ButtonRelease-1>", x=1, y=1)
     root.update()
     assert sent == [True]
+
+
+def _press(root, widget, key):
+    widget.focus_force()
+    root.update()
+    widget.event_generate(key)
+    root.update()
+
+
+def test_enter_sends_prompt(root):
+    from gui.app import App
+    app = App(root, url="http://127.0.0.1:9")
+    sent = []
+    app._send = lambda: sent.append(app.input.get("1.0", "end-1c"))
+    app.input.insert("1.0", "hello")
+    _press(root, app.input, "<Return>")
+    assert sent == ["hello"]  # sent before Tk's default could add a newline
+
+
+def test_shift_enter_inserts_newline(root):
+    from gui.app import App
+    app = App(root, url="http://127.0.0.1:9")
+    sent = []
+    app._send = lambda: sent.append(True)
+    app.input.insert("1.0", "line one")
+    _press(root, app.input, "<Shift-Return>")
+    assert sent == []
+    assert app.input.get("1.0", "end-1c") == "line one\n"
