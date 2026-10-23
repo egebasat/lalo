@@ -53,20 +53,36 @@ async def stream_in_thread(it: Iterator[str]) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     end = object()  # sentinel marking a clean finish
+    stop = threading.Event()  # set when the consumer leaves early (e.g. client disconnect)
+
+    def push(item) -> None:
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+        except RuntimeError:  # the loop already closed; nobody is listening
+            stop.set()
 
     def produce() -> None:
         try:
             for item in it:
-                loop.call_soon_threadsafe(queue.put_nowait, item)
-            loop.call_soon_threadsafe(queue.put_nowait, end)
+                if stop.is_set():
+                    break
+                push(item)
+            push(end)
         except BaseException as exc:  # hand the error to the consumer
-            loop.call_soon_threadsafe(queue.put_nowait, exc)
+            push(exc)
+        finally:
+            close = getattr(it, "close", None)
+            if close is not None:
+                close()  # lets a generator backend run its cleanup
 
     threading.Thread(target=produce, daemon=True, name="generate").start()
-    while (item := await queue.get()) is not end:
-        if isinstance(item, BaseException):
-            raise item
-        yield item
+    try:
+        while (item := await queue.get()) is not end:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        stop.set()
 
 
 @dataclass

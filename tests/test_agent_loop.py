@@ -1,10 +1,12 @@
 import ast
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from agent_bot.agent import RunSettings, run
+from agent_bot.agent import RunSettings, run, stream_in_thread
 from agent_bot.parsing import get_parser
 from agent_bot.registry import ToolRegistry, function_tool, tool
 from agent_bot.tools import get_current_time
@@ -146,6 +148,23 @@ async def test_tool_calls_traced(registry):
     event = next(e for e in events if e.type == "tool_result")
     assert result["id"] == "c1" and result["is_error"] is False
     assert result["content"] == event.content
+
+
+async def test_stream_in_thread_stops_worker_when_consumer_closes():
+    closed = threading.Event()
+
+    def endless():
+        try:
+            while True:
+                yield "x"
+                time.sleep(0.01)
+        finally:
+            closed.set()
+
+    stream = stream_in_thread(endless())
+    assert await anext(stream) == "x"
+    await stream.aclose()  # e.g. the HTTP client disconnected
+    assert closed.wait(2), "worker kept draining the iterator after the consumer left"
 
 
 def test_agent_has_no_forbidden_imports():
