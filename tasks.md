@@ -21,7 +21,7 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | 13 | Tool sandbox (tool server + Docker, headless Chromium) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn; `fetch_page` reads JavaScript-only pages | ⬜ | |
 | 14 | Reliability eval + tuning | At least 4 of 5 eval prompts pass in at least 2 of 3 runs | ⬜ | |
 | 15 | README, smoke test, polish | Setup and customization docs, measured speeds, and a manual GUI checklist | ⬜ | |
-| 16 | Mac apps MCP server (host) | A GUI turn creates an Apple Note and opens a pre-filled WhatsApp draft; nothing is sent without the user | ⬜ | |
+| 16 | Approval gate for send tools + Mac apps MCP server (host) | A GUI turn creates an Apple Note; `send_imessage` runs only after the user clicks Approve, and Decline means nothing is sent | ⬜ | |
 
 ## Measurements so far
 

@@ -4,7 +4,7 @@
 
 ## 1. What this is, and why
 
-A **local, customizable AI agent** for a Mac. The user types a task into a small desktop window ("save a note that I like tea", "search for the latest Python release and summarize it", "draft a WhatsApp message to +90… saying I'm running late"). A small Hugging Face model running natively on the Mac's GPU decides which tools to call. The tools run inside a Docker container (Python functions and MCP servers), and the model answers using their results. The window shows every step: the model's **thinking**, each **tool call**, each **tool result**, and the final **response**.
+A **local, customizable AI agent** for a Mac. The user types a task into a small desktop window ("save a note that I like tea", "search for the latest Python release and summarize it", "text Alex that I'm running late"). A small Hugging Face model running natively on the Mac's GPU decides which tools to call. The tools run inside a Docker container (Python functions and MCP servers), and the model answers using their results. The window shows every step: the model's **thinking**, each **tool call**, each **tool result**, and the final **response**.
 
 **Why:** it's a learning project. The goal is to understand, by building it, how real agents work: the agent loop, tool schemas, tool-call parsing, and MCP. It should also be a proof of concept that does basic tasks for its owner. It mirrors the architecture of production agents (Claude Code, OpenAI Agents SDK, smolagents) at a scale one person can read end to end. That includes their split between where the model runs and where tools run: the model runs where the compute is, and the tools run in a sandbox.
 
@@ -230,7 +230,7 @@ sandbox:                  # what the TOOL SERVER (container) runs
 
 ### 6.7a Mac apps — `mcp_servers/mac_server.py` on the host
 
-Controlling Mac apps (Notes, Reminders, Messages, Mail, WhatsApp, Shortcuts) can't happen in the Linux container, so this MCP server runs **on the host** as a stdio child of the agent server. It is a top-level `mcp_servers` entry, connected once in the agent server's lifespan (§6.7):
+Controlling Mac apps (Notes, Reminders, Messages, Mail, Shortcuts) can't happen in the Linux container, so this MCP server runs **on the host** as a stdio child of the agent server. It is a top-level `mcp_servers` entry, connected once in the agent server's lifespan (§6.7):
 
 ```yaml
 mcp_servers:
@@ -238,34 +238,31 @@ mcp_servers:
   mac:
     command: .venv/bin/python          # relative to the repo root (the server's cwd)
     args: ["-m", "mcp_servers.mac_server"]
-    env: { MAC_ALLOWED_SHORTCUTS: "${MAC_ALLOWED_SHORTCUTS}" }
 ```
 
 **Mechanisms**, all through `subprocess.run` with an argument list (never a shell) and a 15 s timeout:
-- **AppleScript via `osascript`** for apps with a scripting dictionary (Notes, Reminders). User text is passed as `argv` to an `on run argv` script, never spliced into the script source, so quotes and newlines can't break or inject AppleScript.
-- **URL schemes via `open`** for apps without one: WhatsApp (`whatsapp://send?phone=…&text=…`), Mail (`mailto:`) and Messages (`sms:`). These open a **pre-filled draft**; the user presses Send.
-- **`shortcuts run`** for anything else the user builds in the Shortcuts app, restricted to an allowlist.
+- **AppleScript via `osascript`** for apps with a scripting dictionary (Notes, Reminders, Messages, Mail). User text is passed as `argv` to an `on run argv` script, never spliced into the script source, so quotes and newlines can't break or inject AppleScript.
+- **`open -a`** to bring an app to the front.
+- **`shortcuts run`** for anything else the user builds in the Shortcuts app.
 
 **Tools:**
 
-| Tool | Does | Mechanism |
-|---|---|---|
-| `create_apple_note(title, body)` | New note in the default Notes account | AppleScript; body HTML-escaped, newlines → `<br>` |
-| `search_apple_notes(query, max_results=5)` | Titles + first 200 chars of matching notes | AppleScript `notes whose name contains … or plaintext contains …` |
-| `add_reminder(title, due="")` | Reminder in the default list; `due` is ISO `YYYY-MM-DD[THH:MM]` | AppleScript |
-| `draft_whatsapp_message(phone, text)` | Opens WhatsApp on that chat with the text typed in | `open whatsapp://send?…`; `phone` is international digits, 7–15, optional `+` |
-| `draft_imessage(recipient, text)` | Opens Messages with a pre-filled message | `open sms:<recipient>&body=…` |
-| `draft_email(to, subject, body)` | Opens a Mail draft | `open mailto:…` |
-| `open_app(name)` | Brings an app to the front | `open -a <name>` |
-| `list_shortcuts()` / `run_shortcut(name, input="")` | Lists / runs allowlisted Shortcuts and returns their text output | `shortcuts list`, `shortcuts run <name> --input-path … --output-path …` |
+| Tool | Does | Mechanism | Needs approval |
+|---|---|---|---|
+| `create_apple_note(title, body)` | New note in the default Notes account | AppleScript; body HTML-escaped, newlines → `<br>` | no |
+| `search_apple_notes(query, max_results=5)` | Titles + first 200 chars of matching notes | AppleScript `notes whose name contains … or plaintext contains …` | no |
+| `add_reminder(title, due="")` | Reminder in the default list; `due` is ISO `YYYY-MM-DD[THH:MM]` | AppleScript | no |
+| `open_app(name)` | Brings an app to the front | `open -a <name>` | no |
+| `list_shortcuts()` | Names of the user's Shortcuts | `shortcuts list` | no |
+| `send_imessage(recipient, text)` | Sends an iMessage to a phone number or Apple ID email | AppleScript: `send … to participant … of (1st account whose service type = iMessage)` | **yes** |
+| `send_email(to, subject, body)` | Sends an email from Mail's default account | AppleScript: `make new outgoing message`, add a `to recipient`, `send` | **yes** |
+| `run_shortcut(name, input="")` | Runs a Shortcut and returns its text output | `shortcuts run <name> --input-path … --output-path …` | **yes** (a Shortcut can do anything) |
 
 Tool names avoid the notes server's `search_notes`/`add_note` so the model can tell "the agent's own notes" from Apple Notes.
 
-**Safety rule: nothing leaves the Mac without the user.** The agent can only *draft* messages and emails; the user presses Send. There is no tool that sends a message directly, and no keystroke simulation (which would need the Accessibility permission and break whenever an app's UI changes). `run_shortcut` only runs names listed in `MAC_ALLOWED_SHORTCUTS` (comma-separated, empty = none), because a Shortcut can do anything. A GUI confirm step for real sending is a later option (§13).
+**Safety rule: nothing leaves the Mac without the user's yes.** Send tools are available to the model, but every call goes through the approval step in §6.8a first: the user sees the exact recipient and text and approves or declines. There is no keystroke simulation, which would need the Accessibility permission and break whenever an app's UI changes.
 
-**Permissions:** the first `osascript` call to each app triggers macOS's "… wants to control Notes" prompt for the process that started the agent server (Terminal, iTerm, VS Code…). A refusal comes back as AppleScript error `-1743`, which the tool turns into a message telling the user where to enable it (System Settings → Privacy & Security → Automation). The URL-scheme tools need no permission.
-
-**WhatsApp** has no scripting dictionary and no official personal-account API; unofficial bridges (whatsmeow-based MCP servers) break Meta's terms and risk the account, so they are out of scope.
+**Permissions:** the first `osascript` call to each app triggers macOS's "… wants to control Notes" prompt for the process that started the agent server (Terminal, iTerm, VS Code…). A refusal comes back as AppleScript error `-1743`, which the tool turns into a message telling the user where to enable it (System Settings → Privacy & Security → Automation).
 
 ### 6.8 `agent.py` — the loop
 
@@ -275,8 +272,23 @@ The loop is as in §5. Its contract is unchanged from revision 1:
 - A repeat guard: the 3rd identical call stops the turn.
 - Sequential tool execution.
 - `done` is always last.
+- Tools listed in `tools.require_approval` wait for the user's approval (§6.8a).
 
 `agent.py` must not import `transformers`, `torch`, `mlx`, `mcp` or any concrete tool module. It is ≤ 200 lines and thoroughly commented.
+
+### 6.8a Approval before send tools
+
+Tools that act on the user's behalf outside the Mac (sending a message or an email, running a Shortcut) need the user's approval for **every call**. The model may call them freely; the loop asks the user before running one.
+
+- **Which tools:** `tools.require_approval` in `config.yaml`, a list of tool names. Default: `[send_imessage, send_email, run_shortcut]`. Users can add any tool (e.g. a sandbox MCP tool that posts somewhere).
+- **The loop** (`agent.py`): for a call whose name is in the list, after the `tool_call` event it emits an **`approval_request`** event `{id, name, arguments}` and awaits `settings.approve(id, name, arguments) -> bool`, a callback the caller provides.
+  - Approved → the tool runs as normal.
+  - Declined, timed out (`tools.approval_timeout_s`, default 120) or no callback (the eval, scripts) → the tool does **not** run. The model gets a normal, non-error tool result: `"The user declined to run <name>. Don't retry it unless they ask; ask what they'd like to change."`
+  - Either way an `approval_result` event `{id, approved}` follows, so the transcript and the trace record the decision.
+- **The system prompt** tells the model: before a send tool, make sure the recipient and the exact text are what the user asked for. The app shows the user the call and asks for approval, so the model doesn't need to ask in chat first. If declined, don't retry; ask what to change.
+- **CLI:** prints the call and asks `Approve? [y/N]` on stdin (read with `asyncio.to_thread(input)`).
+- **Agent server:** `/chat` streams `approval_request` like any event and waits on a per-call future. **`POST /approve {session_id, call_id, approved}`** resolves it (404 for an unknown or finished call). A client disconnect mid-wait counts as declined.
+- **GUI:** an `approval_request` shows the tool name, the recipient/subject/text in full, and **Approve** / **Decline** buttons, which post to `/approve`. Input is disabled until the user decides.
 
 ### 6.9 `server.py` — agent HTTP API (host)
 
@@ -287,11 +299,12 @@ FastAPI + uvicorn on **`127.0.0.1:8000`** (native, not in Docker).
 | `GET /health` | `{status, model, backend, model_loaded}`. The model loads in a background thread at startup. |
 | `GET /tools` | Opens a sandbox session on demand. Returns tools (name, description, source) and statuses for the sandbox and any host-side servers. |
 | `POST /chat` `{session_id, message, enable_thinking?}` | NDJSON event stream. 503 while the model is loading, 409 while another turn runs. |
+| `POST /approve` `{session_id, call_id, approved}` | Answers a pending `approval_request` (§6.8a). 404 if there is none with that id. |
 | `POST /reset` `{session_id}` | Clears that session's history. |
 
 - Sessions are in memory. Generation runs on a worker thread and streams into the async event stream.
 - The lock is released in the stream's `finally`, which also runs on client disconnect.
-- The **event schema** is unchanged (`token`, `thinking`, `tool_call`, `tool_result`, `answer`, `error`, `done`).
+- The **event schema**: `token`, `thinking`, `tool_call`, `approval_request`, `approval_result`, `tool_result`, `answer`, `error`, `done`.
 
 ### 6.10 `gui/app.py` — tkinter client (host)
 
@@ -330,6 +343,8 @@ tools:
   timeout_s: 20
   max_result_chars: 4000
   disabled: []
+  require_approval: [send_imessage, send_email, run_shortcut]
+  approval_timeout_s: 120
 mcp_servers: { sandbox: { url: http://127.0.0.1:8001/mcp } }
 sandbox: { ... see §6.7 ... }
 server:
@@ -444,7 +459,7 @@ Done: (1) skeleton/config, (2) transformers backend, (3) parser, (4) registry, (
 13. **Tool sandbox:** `tool_server.py` + Docker, with the host connecting per turn. ✅ when GUI turns use container tools, and `docker compose restart` after adding a tool makes it appear on the next turn.
 14. **Reliability eval** + tuning. ✅ when ≥ 4/5 prompts pass ≥ 2/3 runs.
 15. **README, smoke test, polish.**
-16. **Mac apps MCP server** on the host (§6.7a). ✅ when a GUI turn creates an Apple Note and opens a pre-filled WhatsApp draft.
+16. **Mac apps MCP server** on the host (§6.7a). ✅ when a GUI turn creates an Apple Note, and `send_imessage` runs only after the user clicks Approve.
 
 ## 11. Later: cloud GPU
 
@@ -475,7 +490,8 @@ Done: (1) skeleton/config, (2) transformers backend, (3) parser, (4) registry, (
 - `ToolError` for verbatim error passthrough; `Tool.origin` + `replace_origin` for refreshing sandbox tools.
 - Tool source carried in MCP `_meta` and shown as `sandbox/<source>`.
 - `agent.local_python_tools` flag for running without Docker.
-- Mac app control as a separate **host-side** stdio MCP server (the container can't reach Mac apps), drafts-only for messaging, AppleScript text passed as `argv`, and Shortcuts behind an allowlist.
+- Mac app control as a separate **host-side** stdio MCP server (the container can't reach Mac apps), with AppleScript text passed as `argv`.
+- Send tools are allowed but gated by a per-call user approval enforced in the loop (`tools.require_approval`), not left to the model's judgement: a 1.7B model can't be trusted to always ask first.
 - Headless Chromium in the sandbox only as a `fetch_page` fallback, not as a model-driven browser: a 1.7B model can't reliably run a multi-step click/read loop, and the sites worth browsing (LinkedIn, Indeed, Google) block headless browsers anyway.
 - `transformers` backend kept with float32 default; Unsloth reduced to a reserved config value.
 - From revision 1, still in force:
@@ -491,7 +507,6 @@ Done: (1) skeleton/config, (2) transformers backend, (3) parser, (4) registry, (
 - Exact system prompt wording, GUI styling, and the HTML-to-text library for `fetch_page`.
 - How `_meta` is set on MCP tools if the installed SDK version names the field differently. The fallback is the `mcp:sandbox` label.
 - **Nice-to-haves:**
-  - a GUI confirm step so the agent can actually send iMessages/emails (needs a confirmation event in the loop and an endpoint on the server)
   - stop button
   - model switcher
   - tok/s display
