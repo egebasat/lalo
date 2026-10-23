@@ -4,7 +4,7 @@
 
 ## 1. What this is, and why
 
-A **local, customizable AI agent** for a Mac. The user types a task into a small desktop window ("what's the weather in Istanbul tomorrow?", "search for the latest Python release and summarize it"). A small Hugging Face model running natively on the Mac's GPU decides which tools to call. The tools run inside a Docker container (Python functions and MCP servers), and the model answers using their results. The window shows every step: the model's **thinking**, each **tool call**, each **tool result**, and the final **response**.
+A **local, customizable AI agent** for a Mac. The user types a task into a small desktop window ("save a note that I like tea", "search for the latest Python release and summarize it", "draft a WhatsApp message to +90… saying I'm running late"). A small Hugging Face model running natively on the Mac's GPU decides which tools to call. The tools run inside a Docker container (Python functions and MCP servers), and the model answers using their results. The window shows every step: the model's **thinking**, each **tool call**, each **tool result**, and the final **response**.
 
 **Why:** it's a learning project. The goal is to understand, by building it, how real agents work: the agent loop, tool schemas, tool-call parsing, and MCP. It should also be a proof of concept that does basic tasks for its owner. It mirrors the architecture of production agents (Claude Code, OpenAI Agents SDK, smolagents) at a scale one person can read end to end. That includes their split between where the model runs and where tools run: the model runs where the compute is, and the tools run in a sandbox.
 
@@ -178,7 +178,9 @@ It produces `ParsedOutput(thinking, tool_calls, content, parse_errors)`, with `g
 
 ### 6.6 `tools.py` — Python tools *(built; runs in the sandbox)*
 
-`web_search` (DuckDuckGo via `ddgs`), `fetch_page`, `get_weather` (Open-Meteo), `get_current_time` and `calculator`, registered with `register_python_tools(registry)`. They run **in the container**. The host registers them in-process only when `agent.local_python_tools: true`, which is for development and running without Docker.
+`web_search` (DuckDuckGo via `ddgs`), `fetch_page`, `get_current_time` and `calculator`, registered with `register_python_tools(registry)`. They run **in the container**. The host registers them in-process only when `agent.local_python_tools: true`, which is for development and running without Docker.
+
+`fetch_page` tries plain HTTP + trafilatura first. When that yields no readable text (JavaScript-rendered pages such as Workday or React careers sites), it falls back to rendering the page in **headless Chromium** (Playwright) and extracting text from the rendered HTML. The model never drives the browser: no clicking or typing tools, just a better fetcher. If Playwright isn't installed (e.g. the host with `local_python_tools`), the fallback is skipped and the original error is returned.
 
 ### 6.7 MCP — client on both sides, server in the sandbox
 
@@ -225,6 +227,45 @@ sandbox:                  # what the TOOL SERVER (container) runs
 - It also serves `GET /health` → `{"status": "ok", "tools": N, "mcp_servers": [statuses]}`.
 - Timeouts use `tools.timeout_s` in the sandbox registry. The host's MCP call timeout is `tools.timeout_s + 5`, so the sandbox's own timeout message is the one the model sees.
 - **Bundled example server** `mcp_servers/notes_server.py` (FastMCP): `add_note`, `list_notes` and `search_notes`, persisted to `$NOTES_FILE` (`/data/notes.json`). It **reads the file on every call**, so the eval can reset it from the host via the `./data` bind mount.
+
+### 6.7a Mac apps — `mcp_servers/mac_server.py` on the host
+
+Controlling Mac apps (Notes, Reminders, Messages, Mail, WhatsApp, Shortcuts) can't happen in the Linux container, so this MCP server runs **on the host** as a stdio child of the agent server. It is a top-level `mcp_servers` entry, connected once in the agent server's lifespan (§6.7):
+
+```yaml
+mcp_servers:
+  sandbox: { url: http://127.0.0.1:8001/mcp }
+  mac:
+    command: .venv/bin/python          # relative to the repo root (the server's cwd)
+    args: ["-m", "mcp_servers.mac_server"]
+    env: { MAC_ALLOWED_SHORTCUTS: "${MAC_ALLOWED_SHORTCUTS}" }
+```
+
+**Mechanisms**, all through `subprocess.run` with an argument list (never a shell) and a 15 s timeout:
+- **AppleScript via `osascript`** for apps with a scripting dictionary (Notes, Reminders). User text is passed as `argv` to an `on run argv` script, never spliced into the script source, so quotes and newlines can't break or inject AppleScript.
+- **URL schemes via `open`** for apps without one: WhatsApp (`whatsapp://send?phone=…&text=…`), Mail (`mailto:`) and Messages (`sms:`). These open a **pre-filled draft**; the user presses Send.
+- **`shortcuts run`** for anything else the user builds in the Shortcuts app, restricted to an allowlist.
+
+**Tools:**
+
+| Tool | Does | Mechanism |
+|---|---|---|
+| `create_apple_note(title, body)` | New note in the default Notes account | AppleScript; body HTML-escaped, newlines → `<br>` |
+| `search_apple_notes(query, max_results=5)` | Titles + first 200 chars of matching notes | AppleScript `notes whose name contains … or plaintext contains …` |
+| `add_reminder(title, due="")` | Reminder in the default list; `due` is ISO `YYYY-MM-DD[THH:MM]` | AppleScript |
+| `draft_whatsapp_message(phone, text)` | Opens WhatsApp on that chat with the text typed in | `open whatsapp://send?…`; `phone` is international digits, 7–15, optional `+` |
+| `draft_imessage(recipient, text)` | Opens Messages with a pre-filled message | `open sms:<recipient>&body=…` |
+| `draft_email(to, subject, body)` | Opens a Mail draft | `open mailto:…` |
+| `open_app(name)` | Brings an app to the front | `open -a <name>` |
+| `list_shortcuts()` / `run_shortcut(name, input="")` | Lists / runs allowlisted Shortcuts and returns their text output | `shortcuts list`, `shortcuts run <name> --input-path … --output-path …` |
+
+Tool names avoid the notes server's `search_notes`/`add_note` so the model can tell "the agent's own notes" from Apple Notes.
+
+**Safety rule: nothing leaves the Mac without the user.** The agent can only *draft* messages and emails; the user presses Send. There is no tool that sends a message directly, and no keystroke simulation (which would need the Accessibility permission and break whenever an app's UI changes). `run_shortcut` only runs names listed in `MAC_ALLOWED_SHORTCUTS` (comma-separated, empty = none), because a Shortcut can do anything. A GUI confirm step for real sending is a later option (§13).
+
+**Permissions:** the first `osascript` call to each app triggers macOS's "… wants to control Notes" prompt for the process that started the agent server (Terminal, iTerm, VS Code…). A refusal comes back as AppleScript error `-1743`, which the tool turns into a message telling the user where to enable it (System Settings → Privacy & Security → Automation). The URL-scheme tools need no permission.
+
+**WhatsApp** has no scripting dictionary and no official personal-account API; unofficial bridges (whatsmeow-based MCP servers) break Meta's terms and risk the account, so they are out of scope.
 
 ### 6.8 `agent.py` — the loop
 
@@ -306,7 +347,8 @@ Standard `logging` to stdout. One JSONL trace per turn in `data/traces/` (host),
 ## 7. Docker — the tool sandbox
 
 ### 7.1 Image
-- `python:3.12-slim-bookworm`, with **no torch, no transformers model code and no weights**. `requirements-sandbox.txt` is a subset: `mcp`, `httpx`, `ddgs`, `trafilatura`, `jsonschema`, `pydantic`, `pyyaml`, `uvicorn`, `starlette`, plus `transformers` for `get_json_schema` only. `transformers` imports without torch.
+- `python:3.12-slim-bookworm`, with **no torch, no transformers model code and no weights**. `requirements-sandbox.txt` is a subset: `mcp`, `httpx`, `ddgs`, `trafilatura`, `jsonschema`, `pydantic`, `pyyaml`, `uvicorn`, `starlette`, `playwright`, plus `transformers` for `get_json_schema` only. `transformers` imports without torch.
+- **Headless Chromium** for the `fetch_page` fallback: `playwright install --with-deps chromium` at build time (as root, before switching user), with `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` so the non-root user can run it. Adds roughly 1 GB to the image. Playwright launches Chromium without its own sandbox by default; the container is the sandbox.
 - Includes Node.js LTS (for `npx`) and `uv` (for `uvx`). Runs as a non-root user. Builds for `linux/arm64` and `linux/amd64`.
 - `CMD ["python", "-m", "sandbox.tool_server"]`.
 
@@ -324,13 +366,14 @@ services:
     env_file: [{ path: .env, required: false }]
     environment:
       - NOTES_FILE=/data/notes.json
+    shm_size: 1gb            # Chromium crashes with Docker's 64 MB /dev/shm default
     deploy: { resources: { limits: { memory: 2g } } }
 ```
 
 ### 7.3 Host requirements
 - **Mac:** M2 Pro (12 cores, 16 GB) with **Docker Desktop**, context `desktop-linux`. Rancher Desktop is installed but unused, and its `~/.rd/bin/docker` may come first on `PATH`; the README says to check `docker context ls`.
 - **Host venv:** python.org Python 3.12 with tkinter. `requirements.txt` covers the agent server, GUI and tests: `mlx-lm`, `transformers`, `fastapi`, `uvicorn`, `mcp`, … and torch optionally, for the CPU backend.
-- **Memory:** the model uses the Mac's unified memory (3.7 GB peak for 1.7B). The container needs ≤ 2 GB.
+- **Memory:** the model uses the Mac's unified memory (3.7 GB peak for 1.7B). The container needs ≤ 2 GB, including one headless Chromium page (~300–500 MB) while `fetch_page` falls back to it.
 - `docker compose restart` picks up changes to `tools.py`, `config.yaml` and `mcp_servers/` without a rebuild. A new pip dependency for a tool needs `docker compose up --build`.
 
 ### 7.4 Speed
@@ -348,7 +391,7 @@ agent_bot/
 ├── prompts/system.md
 ├── agent_bot/   server.py agent.py inference.py parsing.py registry.py tools.py mcp_tools.py config.py events.py trace.py cli.py
 ├── sandbox/     __init__.py tool_server.py
-├── mcp_servers/ notes_server.py
+├── mcp_servers/ notes_server.py  mac_server.py (host)
 ├── gui/         app.py
 ├── scripts/     download_model.py generate.py eval.py
 ├── evals/       prompts.yaml
@@ -365,11 +408,11 @@ agent_bot/
 
 ### 9.1 Reliability target (the proof-of-concept bar)
 
-5 fixed prompts, each run 3 times. **Target: at least 4 of 5 prompts pass in at least 2 of 3 runs.** The prompts and checks are unchanged from revision 1:
+5 fixed prompts, each run 3 times. **Target: at least 4 of 5 prompts pass in at least 2 of 3 runs.** The prompts and checks:
 
 | # | Prompt | Must call | Answer check |
 |---|---|---|---|
-| 1 | "What's the weather in Istanbul tomorrow?" | `get_weather`, location ∋ "Istanbul", `days ≥ 2` | mentions a temperature |
+| 1 | "Read https://peps.python.org/pep-0020/ and tell me the first line of the Zen of Python." | `fetch_page`, url ∋ "pep-0020" | contains "Beautiful is better than ugly" |
 | 2 | "Search the web for the latest stable Python release and tell me its version number." | `web_search` | a `3.x` version that appears in a tool result |
 | 3 | "Save a note that my dentist appointment is Friday at 10am, then list all my notes." | `add_note` then `list_notes` | mentions "dentist" |
 | 4 | "What is 17.5% of 2,340?" | `calculator` | contains `409.5` |
@@ -394,13 +437,14 @@ Done: (1) skeleton/config, (2) transformers backend, (3) parser, (4) registry, (
    - requirements split.
 7. **MLX backend.** ✅ when `scripts/generate.py` streams from MLX at tens of tok/s.
 8. **Events + traces.**
-9. **Agent loop + CLI** (with `--local-tools` to run without Docker). ✅ when the real model calls `get_weather` and answers.
+9. **Agent loop + CLI** (with `--local-tools` to run without Docker). ✅ when the real model calls a tool and answers.
 10. **Agent server** on the host. ✅ when `curl -N` shows the event stream.
 11. **GUI.** ✅ when a full turn renders all event kinds (using `local_python_tools: true` until the sandbox exists).
 12. **MCP client + notes server.**
 13. **Tool sandbox:** `tool_server.py` + Docker, with the host connecting per turn. ✅ when GUI turns use container tools, and `docker compose restart` after adding a tool makes it appear on the next turn.
 14. **Reliability eval** + tuning. ✅ when ≥ 4/5 prompts pass ≥ 2/3 runs.
 15. **README, smoke test, polish.**
+16. **Mac apps MCP server** on the host (§6.7a). ✅ when a GUI turn creates an Apple Note and opens a pre-filled WhatsApp draft.
 
 ## 11. Later: cloud GPU
 
@@ -431,10 +475,12 @@ Done: (1) skeleton/config, (2) transformers backend, (3) parser, (4) registry, (
 - `ToolError` for verbatim error passthrough; `Tool.origin` + `replace_origin` for refreshing sandbox tools.
 - Tool source carried in MCP `_meta` and shown as `sandbox/<source>`.
 - `agent.local_python_tools` flag for running without Docker.
+- Mac app control as a separate **host-side** stdio MCP server (the container can't reach Mac apps), drafts-only for messaging, AppleScript text passed as `argv`, and Shortcuts behind an allowlist.
+- Headless Chromium in the sandbox only as a `fetch_page` fallback, not as a model-driven browser: a 1.7B model can't reliably run a multi-step click/read loop, and the sites worth browsing (LinkedIn, Indeed, Google) block headless browsers anyway.
 - `transformers` backend kept with float32 default; Unsloth reduced to a reserved config value.
 - From revision 1, still in force:
   - Default model Qwen3-1.7B.
-  - DuckDuckGo search and the Open-Meteo weather tool.
+  - DuckDuckGo search.
   - Notes as the example MCP server.
   - In-memory sessions; thinking stripped from history.
   - 6 iterations max, 20 s tool timeout, 4000-char result cap.
@@ -445,6 +491,7 @@ Done: (1) skeleton/config, (2) transformers backend, (3) parser, (4) registry, (
 - Exact system prompt wording, GUI styling, and the HTML-to-text library for `fetch_page`.
 - How `_meta` is set on MCP tools if the installed SDK version names the field differently. The fallback is the `mcp:sandbox` label.
 - **Nice-to-haves:**
+  - a GUI confirm step so the agent can actually send iMessages/emails (needs a confirmation event in the loop and an endpoint on the server)
   - stop button
   - model switcher
   - tok/s display

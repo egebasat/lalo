@@ -10,17 +10,18 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | 2 | Inference backend (CPU, `transformers`) | Streams a reply with a `<think>` block; generation errors are raised, not hung | ✅ | `38e3b69`, `f82e170` |
 | 3 | Qwen3 output parser | Thinking, tool calls and text are split out; cut-off or broken output is reported, never dropped | ✅ | `d75cda1`, `8497532` |
 | 4 | Tool registry | Argument checks, timeouts, truncation and errors work, and `call` never raises | ✅ | `bceadd4` |
-| 5 | The 5 built-in tools | `web_search`, `fetch_page`, `get_weather`, `get_current_time` and a safe `calculator` work and are tested offline | ✅ | `ceef164`, `a34c240` |
+| 5 | The built-in tools | `web_search`, `fetch_page`, `get_current_time` and a safe `calculator` work and are tested offline | ✅ | `ceef164`, `a34c240` |
 | 6 | Revision-2 amendments (config, registry, requirements) | `mlx` is the default backend, the sandbox config exists, `ToolError` and `replace_origin` work | ✅ | `52ab355` |
 | 7 | MLX backend on the Apple GPU | `scripts/generate.py` streams from MLX at tens of tok/s (measured 40–47) | ✅ | `965f24b` |
 | 8 | Events and traces | Event types serialize to NDJSON; each turn writes a JSONL trace | ✅ | `afced78` |
-| 9 | Agent loop + CLI | `python -m agent_bot.cli "…"` — the real model calls `get_weather` and answers | ✅ | `bcf55f6` |
+| 9 | Agent loop + CLI | `python -m agent_bot.cli "…"` — the real model calls a tool and answers | ✅ | `bcf55f6` |
 | 10 | Agent server on the host | `curl -N` shows the event stream from `/chat` | ⏳ | |
 | 11 | tkinter GUI | A full turn shows all event kinds (thinking, tool call, tool result, answer, error) | ⬜ | |
 | 12 | MCP client + notes server | "Save a note that I like tea" and then "what notes do I have?" works | ✅ | `fd5f240`, `42c4956` |
-| 13 | Tool sandbox (tool server + Docker) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn | ⬜ | |
+| 13 | Tool sandbox (tool server + Docker, headless Chromium) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn; `fetch_page` reads JavaScript-only pages | ⬜ | |
 | 14 | Reliability eval + tuning | At least 4 of 5 eval prompts pass in at least 2 of 3 runs | ⬜ | |
 | 15 | README, smoke test, polish | Setup and customization docs, measured speeds, and a manual GUI checklist | ⬜ | |
+| 16 | Mac apps MCP server (host) | A GUI turn creates an Apple Note and opens a pre-filled WhatsApp draft; nothing is sent without the user | ⬜ | |
 
 ## Measurements so far
 
