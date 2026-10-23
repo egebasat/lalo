@@ -1,5 +1,5 @@
 model:
-  path: models/Qwen3-1.7B   # host-relative; or models/Qwen3-4B (smarter, ~2x RAM, slower)
+  path: models/Qwen3-4B-8bit  # host-relative. Peak RAM: 4B-8bit 5.3 GB, 4B 8.9 GB, 1.7B 4.2 GB
   family: qwen3             # selects parser
   backend: mlx              # mlx | transformers | unsloth
   dtype: float32            # transformers only (bf16 is ~14x slower on Mac CPU: 0.33 vs 4.64 tok/s)

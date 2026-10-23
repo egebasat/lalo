@@ -19,7 +19,7 @@ def write_config(tmp_path: Path, mutate) -> Path:
 
 def test_loads_defaults_from_yaml():
     cfg = load_config(REPO_CONFIG, env={})
-    assert cfg.model.path == "models/Qwen3-1.7B"
+    assert cfg.model.path == "models/Qwen3-4B-8bit"
     assert cfg.model.family == "qwen3"
     assert cfg.model.backend == "mlx"
     assert cfg.server.host == "127.0.0.1"

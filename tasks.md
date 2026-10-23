@@ -30,5 +30,7 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | Qwen3-1.7B, CPU, bf16 | 0.33 tok/s |
 | Qwen3-1.7B, CPU, float32 | 4.6 tok/s |
 | Qwen3-1.7B, MLX on the GPU | 38 tok/s on the first call, 47 tok/s once warmed up |
+| MLX, 2k-token prompt + ~350 generated: peak RAM / speed | 1.7B bf16 4.24 GB / 43 tok/s; 4B bf16 8.89 GB / 20 tok/s; 4B 8-bit 5.30 GB / 35 tok/s |
+| Agent CLI, Qwen3-4B 8-bit, "What time is it in Tokyo?" | correct tool call and answer, 2 iterations, 11.6 s |
 | Agent server, real model, "17.5% of 2340" | calculator called, 409.5 correct, 2 iterations, 12.2 s, 488 tokens |
 | Tool choice (5 prompts, CPU, thinking off, 1 run) | 5/5 correct tool; the answer to "17.5% of 2,340" was wrong (40,950 instead of 409.5) |
