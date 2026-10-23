@@ -12,3 +12,4 @@ ddgs
 trafilatura
 mcp>=2,<3
 mlx-lm>=0.32
+requests  # gui/app.py, imported by tests/test_gui_render.py

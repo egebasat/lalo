@@ -1,0 +1,2 @@
+# GUI client dependencies (tkinter ships with Python)
+requests
