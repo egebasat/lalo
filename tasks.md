@@ -22,6 +22,13 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | 14 | Reliability eval + tuning | At least 4 of 5 eval prompts pass in at least 2 of 3 runs | ⬜ | |
 | 15 | README, smoke test, polish | Setup and customization docs, measured speeds, and a manual GUI checklist | ⬜ | |
 | 16 | Approval gate for send tools + Mac apps MCP server (host) | A GUI turn creates an Apple Note; `send_imessage` runs only after the user clicks Approve, and Decline means nothing is sent | ⬜ | |
+| 17 | Document ingestion pipeline | Files dropped into `data/inbox/` (PDF, Markdown, text, HTML) are parsed, chunked and indexed with their source and page; a `search_documents` tool returns cited chunks; re-ingesting an unchanged file is a no-op and a changed file replaces its old chunks | ⬜ | |
+| 18 | Unified persistent memory | One store under `data/` holds notes, remembered facts from conversations and ingested documents; it survives an agent server restart; a single `recall` tool searches all of it with source labels; "Remember I like tea", restart, then "what do I like?" works | ⬜ | |
+| 19 | GUI key bindings | Ctrl+Q quits, Ctrl+N starts a new session, Ctrl+L clears the transcript view, Esc stops the running turn, and Ctrl+/ shows a shortcuts list; on macOS each also works with Cmd; bindings live in one table and fire only once per press | ⬜ | |
+| 20 | Timer-based event triggers in the server | Scheduled tasks (prompt, daily time or interval, local time zone) are saved under `data/` and reloaded when the server starts; the server sits idle until a timer fires and then starts a turn with the task's prompt; a task due while the server was down runs once at startup, not once per missed day; tested with a fake clock | ⬜ | |
+| 21 | Scheduled tasks for the agent | `schedule_task`, `list_scheduled_tasks` and `cancel_scheduled_task` tools work; "check the weather every day at 9am" registers a task, and when it fires the agent runs it and the result shows in the GUI and the trace; a turn the timer starts while another turn is running waits its turn and doesn't interrupt it | ⬜ | |
+| 22 | Collapsible events in the conversation view | Thinking blocks, tool calls and tool results show as one-line headers (e.g. "▸ Thinking · 312 tokens", "▸ calculator(…) · 0.2 s") that expand and collapse on click; they start collapsed, while answers and errors always show in full; a "show all / hide all" toggle and a remembered default work; long streaming turns don't flicker or jump the scroll position | ⬜ | |
+| 23 | *(Experimental)* Rust backend study | A short write-up in `docs/` with a profile of a real turn that shows where the time goes (prefill, decode, parsing, tool calls, HTTP/event streaming); a prototype of the hottest non-GPU path in Rust (e.g. via PyO3, or `mlx-rs`/`candle` for inference) benchmarked against the current Python version on the same prompts; a go/no-go recommendation with the measured gain and the maintenance cost | ⬜ | |
 
 ## Measurements so far
 
@@ -31,6 +38,7 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | Qwen3-1.7B, CPU, float32 | 4.6 tok/s |
 | Qwen3-1.7B, MLX on the GPU | 38 tok/s on the first call, 47 tok/s once warmed up |
 | MLX, 2k-token prompt + ~350 generated: peak RAM / speed | 1.7B bf16 4.24 GB / 43 tok/s; 4B bf16 8.89 GB / 20 tok/s; 4B 8-bit 5.30 GB / 35 tok/s |
+| Prompt cache, Qwen3-4B 8-bit, ~3k-token prompt: time to first token on the next iteration | 6.70 s without the cache, 0.24 s with it (2,992 tokens reused) |
 | Agent CLI, Qwen3-4B 8-bit, "What time is it in Tokyo?" | correct tool call and answer, 2 iterations, 11.6 s |
 | Agent server, real model, "17.5% of 2340" | calculator called, 409.5 correct, 2 iterations, 12.2 s, 488 tokens |
 | Tool choice (5 prompts, CPU, thinking off, 1 run) | 5/5 correct tool; the answer to "17.5% of 2,340" was wrong (40,950 instead of 409.5) |
