@@ -27,7 +27,7 @@ def test_loads_defaults_from_yaml():
     assert cfg.sandbox.port == 8001
     assert cfg.sandbox.mcp_servers["local_notes"].command == "python"
     assert cfg.sandbox.mcp_servers["fetch"].enabled is False
-    assert cfg.agent.local_python_tools is True  # config.yaml runs the Python tools in-process until the sandbox exists
+    assert cfg.agent.local_python_tools is False  # tools run in the Docker sandbox
     assert cfg.agent.max_iterations == 6
     assert cfg.tools.timeout_s == 20
     assert cfg.tools.max_result_chars == 4000

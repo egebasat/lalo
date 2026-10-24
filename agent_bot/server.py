@@ -5,8 +5,9 @@
 
 The model loads in a background thread at startup, so /health answers while it loads.
 One turn runs at a time (a single local model can't serve two); a second /chat gets 409.
-Python tools run in-process only when agent.local_python_tools is true; the sandboxed
-tools are wired in by Task 13.
+Python tools run in-process only when agent.local_python_tools is true. Otherwise tools
+come from the Docker sandbox, which each turn connects to afresh (see turn_tools), so a
+`docker compose restart` with new tools needs no restart here.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
-from contextlib import aclosing, asynccontextmanager
+from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -25,7 +26,10 @@ from pydantic import BaseModel, Field
 
 from agent_bot.agent import RunSettings, run
 from agent_bot.config import AppConfig, load_config
+from agent_bot.events import Error
 from agent_bot.inference import Backend, create_backend
+from agent_bot.mcp_tools import (McpServerStatus, connect_mcp_servers, failure_messages,
+                                 tool_timeout, turn_tools)
 from agent_bot.parsing import get_parser
 from agent_bot.registry import ToolRegistry
 from agent_bot.tools import register_python_tools
@@ -52,6 +56,7 @@ class _State:
     registry: ToolRegistry = field(default_factory=ToolRegistry)
     prompt_template: str = ""
     sessions: dict[str, list[dict]] = field(default_factory=dict)
+    host_statuses: list[McpServerStatus] = field(default_factory=list)  # stdio, connected once
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -96,7 +101,12 @@ def create_app(config: AppConfig | None = None, backend: Backend | None = None) 
         loading = None
         if state.backend is None:
             loading = asyncio.create_task(load_model(cfg))
-        yield
+        async with AsyncExitStack() as stack:
+            # stdio servers are children of this process and stay connected; url servers
+            # (the sandbox) are connected per turn instead.
+            stdio = {n: c for n, c in cfg.mcp_servers.items() if c.command}
+            state.host_statuses = await connect_mcp_servers(stdio, state.registry, stack)
+            yield
         if loading is not None:
             loading.cancel()  # the loader thread can't be interrupted; this just drops the task
 
@@ -115,11 +125,16 @@ def create_app(config: AppConfig | None = None, backend: Backend | None = None) 
 
     @app.get("/tools")
     async def tools() -> dict:
-        return {
-            "tools": [{"name": t.name, "description": t.description, "source": t.source}
-                      for t in state.registry.tools()],
-            "mcp_servers": [],  # sandbox and host MCP servers arrive in Task 13
-        }
+        # A copy, so asking for the list while a turn runs can't swap that turn's tools.
+        registry = ToolRegistry(state.registry.max_result_chars, state.registry.disabled)
+        for t in state.registry.tools():
+            registry.register(t)
+        async with turn_tools(state.cfg.mcp_servers, registry) as statuses:
+            return {
+                "tools": [{"name": t.name, "description": t.description, "source": t.source}
+                          for t in registry.tools()],
+                "mcp_servers": [s.to_dict() for s in state.host_statuses + statuses],
+            }
 
     @app.post("/chat")
     async def chat(req: ChatRequest) -> StreamingResponse:
@@ -156,18 +171,21 @@ def _start_turn(state: _State, req: ChatRequest) -> _TurnResponse:
         max_new_tokens=cfg.generation.max_new_tokens,
         temperature=cfg.generation.temperature,
         max_iterations=cfg.agent.max_iterations,
-        tool_timeout_s=cfg.tools.timeout_s,  # +5 for sandbox tools (Task 13)
+        tool_timeout_s=tool_timeout(cfg),
     )
     tracer = (JsonlTracer(Path(cfg.logging.trace_dir), f"{req.session_id}-{uuid.uuid4().hex}")
               if cfg.logging.trace_dir else NullTracer())
     backend = state.backend
 
     async def body() -> AsyncIterator[str]:
-        events = run(history, backend=backend, parser=get_parser(backend.model_family),
-                     registry=state.registry, settings=settings, tracer=tracer)
-        async with aclosing(events):
-            async for event in events:
-                yield event.to_json() + "\n"
+        async with turn_tools(cfg.mcp_servers, state.registry) as statuses:
+            for message in failure_messages(cfg.mcp_servers, statuses):
+                yield Error(message).to_json() + "\n"
+            events = run(history, backend=backend, parser=get_parser(backend.model_family),
+                         registry=state.registry, settings=settings, tracer=tracer)
+            async with aclosing(events):
+                async for event in events:
+                    yield event.to_json() + "\n"
 
     return _TurnResponse(body(), release=state.lock.release, media_type="application/x-ndjson")
 

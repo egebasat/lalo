@@ -9,3 +9,4 @@ httpx
 ddgs
 trafilatura
 transformers>=4.51
+playwright>=1.50

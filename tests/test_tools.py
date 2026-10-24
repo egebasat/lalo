@@ -89,3 +89,51 @@ def test_register_python_tools():
         "web_search", "fetch_page", "get_current_time", "calculator",
     }
     assert all(t.source == "python" for t in reg.tools())
+
+
+ARTICLE = ("<html><body><article><h1>Careers at Example</h1>"
+           + "".join(f"<p>Paragraph {i}: we build useful software with kind, curious people "
+                     f"and we are hiring engineers in several cities.</p>" for i in range(6))
+           + "</article></body></html>")
+JS_SHELL = '<html><body><div id="root"></div><script src="/app.js"></script></body></html>'
+
+
+def test_fetch_page_uses_browser_when_js_shell(monkeypatch):
+    import respx
+    import agent_bot.tools as tools
+
+    rendered = []
+    monkeypatch.setattr(tools, "_render_with_browser",
+                        lambda url, timeout_s=15: rendered.append(url) or ARTICLE)
+    with respx.mock:
+        respx.get("https://example.com/jobs").respond(200, html=JS_SHELL)
+        text = fetch_page("https://example.com/jobs")
+    assert rendered == ["https://example.com/jobs"]
+    assert "hiring engineers" in text
+
+
+def test_fetch_page_skips_browser_when_text_found(monkeypatch):
+    import respx
+    import agent_bot.tools as tools
+
+    def no_browser(url, timeout_s=15):
+        raise AssertionError("browser should not be used")
+
+    monkeypatch.setattr(tools, "_render_with_browser", no_browser)
+    with respx.mock:
+        respx.get("https://example.com/post").respond(200, html=ARTICLE)
+        assert "hiring engineers" in fetch_page("https://example.com/post")
+
+
+def test_fetch_page_without_playwright_keeps_error(monkeypatch):
+    import respx
+    import agent_bot.tools as tools
+
+    def missing(url, timeout_s=15):
+        raise ImportError("No module named 'playwright'")
+
+    monkeypatch.setattr(tools, "_render_with_browser", missing)
+    with respx.mock:
+        respx.get("https://example.com/jobs").respond(200, html=JS_SHELL)
+        with pytest.raises(ValueError, match="Could not extract readable text"):
+            fetch_page("https://example.com/jobs")

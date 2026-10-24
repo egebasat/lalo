@@ -15,7 +15,7 @@ generation:
 agent:
   max_iterations: 6
   system_prompt_file: prompts/system.md
-  local_python_tools: true  # true = run tools.py in-process on the host (no Docker)
+  local_python_tools: false # true = run tools.py in-process on the host (no Docker)
 
 tools:
   timeout_s: 20
