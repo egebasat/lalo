@@ -10,6 +10,7 @@ def app():
         pytest.skip("no display")
     from gui.app import App
     app = App(root, url="http://127.0.0.1:9")
+    app.turn = 1  # events below belong to a running turn
     app._append([(f"line {i}\n", "answer") for i in range(200)])
     root.update()  # the window has no size until now, so start at the bottom explicitly
     app.transcript.see("end")
@@ -31,32 +32,33 @@ def _at_bottom(app):
 
 def test_follows_new_output_when_at_bottom(app):
     assert _at_bottom(app)
-    app._show_event({"type": "token", "text": "hello"})
-    app._show_event({"type": "tool_call", "name": "calculator", "arguments": {}, "source": "python"})
+    app._show_event(app.turn, {"type": "token", "text": "hello"})
+    app._show_event(app.turn, {"type": "tool_call", "name": "calculator", "arguments": {}, "source": "python"})
     assert _at_bottom(app)
 
 
 def test_tokens_do_not_move_a_scrolled_up_view(app):
     view = _scroll_up(app)
     for _ in range(50):
-        app._show_event({"type": "token", "text": "tok "})
+        app._show_event(app.turn, {"type": "token", "text": "tok "})
     app.root.update()
     assert app.transcript.yview()[0] == pytest.approx(view[0], abs=0.01)
 
 
 def test_events_and_answer_do_not_move_a_scrolled_up_view(app):
     view = _scroll_up(app)
-    app._show_event({"type": "token", "text": "tok "})
-    app._show_event({"type": "thinking", "text": "hmm"})
-    app._show_event({"type": "answer", "text": "**done**"})
-    app._show_event({"type": "done", "iterations": 1, "elapsed_s": 1.0, "tokens_generated": 5})
+    app._show_event(app.turn, {"type": "token", "text": "tok "})
+    app._show_event(app.turn, {"type": "thinking", "text": "hmm"})
+    app._show_event(app.turn, {"type": "answer", "text": "**done**"})
+    app._show_event(app.turn, {"type": "done", "iterations": 1, "elapsed_s": 1.0, "tokens_generated": 5})
     app.root.update()
     assert app.transcript.yview()[0] == pytest.approx(view[0], abs=0.01)
 
 
 def test_sending_a_message_scrolls_to_the_bottom(app):
     _scroll_up(app)
-    app._chat = lambda body: None  # no network
+    app._chat = lambda body, turn: None  # no network
+    app.turn = None  # idle, so the message is sent rather than queued
     app.input.insert("1.0", "hello")
     app._send()
     assert _at_bottom(app)

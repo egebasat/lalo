@@ -16,6 +16,7 @@ import threading
 import time
 import tkinter as tk
 import uuid
+from collections import deque
 from collections.abc import Iterable, Iterator
 from tkinter import scrolledtext
 
@@ -136,7 +137,9 @@ class App:
         self.url = url
         self.session_id = uuid.uuid4().hex
         self.inbox: queue.Queue = queue.Queue()  # (kind, payload) from worker threads
-        self.in_flight = 0  # /chat requests still open; the timer runs while > 0
+        self.pending: deque[dict] = deque()  # /chat bodies waiting for the current turn
+        self.turn: int | None = None  # id of the /chat request that owns the live region
+        self.last_turn = 0
         self.busy_since = 0.0
         self.images: list = []  # formula images in the transcript; Tk needs them referenced
 
@@ -196,6 +199,8 @@ class App:
         self.buttons["Send"].pack()
         self.elapsed = tk.StringVar(value="")
         tk.Label(side, textvariable=self.elapsed, foreground=C["muted"]).pack()
+        self.queued = tk.StringVar(value="")
+        tk.Label(side, textvariable=self.queued, foreground=C["muted"]).pack()
         # Enter sends; Shift+Enter falls through to Tk's default and inserts a newline.
         for key in ("<Return>", "<KP_Enter>", "<Command-Return>", "<Control-Return>"):
             self.input.bind(key, lambda _e: (self._send(), "break")[1])
@@ -226,7 +231,13 @@ class App:
             self.transcript.delete(ranges[0], ranges[-1])
             self.transcript.configure(state="disabled")
 
-    def _show_event(self, event: dict) -> None:
+    def _show_event(self, turn: int, event: dict) -> None:
+        if turn != self.turn:
+            # Not the running turn (e.g. a 409 from the server): show it, but leave the
+            # running turn's live output alone.
+            if event.get("type") != "token":
+                self._append(render_event(event))
+            return
         if event.get("type") == "token":
             if not self.transcript.tag_ranges("live"):
                 self._append([("generating… ", "live")])
@@ -255,18 +266,39 @@ class App:
         if not message:
             return
         self.input.delete("1.0", "end")
-        self._append(render_user(message), follow=True)
-        # Sending while a turn runs is allowed on purpose: the server answers 409 and
-        # that shows up as an error, which is clearer than a silently greyed-out button.
-        if self.in_flight == 0:
+        # The server runs one turn at a time, so a prompt sent while a turn runs waits
+        # here and goes out when that turn finishes. Settings are captured now.
+        self.pending.append({"session_id": self.session_id, "message": message,
+                             "enable_thinking": self.thinking.get()})
+        self._dispatch_next()
+
+    def _dispatch_next(self) -> None:
+        if self.turn is None and self.pending:
+            body = self.pending.popleft()
+            self._append(render_user(body["message"]), follow=True)
+            self.last_turn += 1
+            self.turn = self.last_turn
             self.busy_since = time.monotonic()
-        self.in_flight += 1
-        body = {"session_id": self.session_id, "message": message,
-                "enable_thinking": self.thinking.get()}
-        threading.Thread(target=self._chat, args=(body,), daemon=True).start()
+            threading.Thread(target=self._chat, args=(body, self.turn), daemon=True).start()
+        self.queued.set(f"{len(self.pending)} queued" if self.pending else "")
+
+    def _finish(self, turn: int, reached_server: bool) -> None:
+        if turn != self.turn:
+            return
+        self.turn = None
+        if reached_server:
+            self._dispatch_next()
+        elif self.pending:
+            # The server is unreachable: sending the rest would only fail the same way.
+            # Keep them; the next Send retries, oldest first.
+            n = len(self.pending)
+            self._append([(f"[{n} queued prompt{'s' if n > 1 else ''} not sent — "
+                           "press Send to retry]\n\n", "meta")])
 
     def _new_chat(self) -> None:
         old, self.session_id = self.session_id, uuid.uuid4().hex
+        self.pending.clear()
+        self.queued.set("")
         self.transcript.configure(state="normal")
         self.transcript.delete("1.0", "end")
         self.transcript.configure(state="disabled")
@@ -286,18 +318,21 @@ class App:
 
     # --- workers (background threads; never touch widgets) ------------------------
 
-    def _chat(self, body: dict) -> None:
+    def _chat(self, body: dict, turn: int) -> None:
+        reached_server = True
         try:
             with requests.post(f"{self.url}/chat", json=body, stream=True,
                                timeout=(5, None)) as resp:
                 if resp.status_code != 200:
-                    self.inbox.put(("event", _http_error(resp)))
+                    self.inbox.put(("event", (turn, _http_error(resp))))
                 else:
                     for event in iter_events(resp.iter_lines()):
-                        self.inbox.put(("event", event))
+                        self.inbox.put(("event", (turn, event)))
         except requests.RequestException as exc:
-            self.inbox.put(("event", {"type": "error", "message": f"Connection error: {exc}"}))
-        self.inbox.put(("finished", None))
+            reached_server = False
+            self.inbox.put(("event", (turn, {"type": "error",
+                                             "message": f"Connection error: {exc}"})))
+        self.inbox.put(("finished", (turn, reached_server)))
 
     def _watch_health(self) -> None:
         while True:
@@ -338,11 +373,11 @@ class App:
             while True:
                 kind, payload = self.inbox.get_nowait()
                 if kind == "event":
-                    self._show_event(payload)
+                    self._show_event(*payload)
                 elif kind == "status":
                     self.status.set(payload)
                 elif kind == "finished":
-                    self.in_flight -= 1
+                    self._finish(*payload)
                 elif kind == "tools":
                     widget, text = payload
                     if widget.winfo_exists():
@@ -352,7 +387,7 @@ class App:
                         widget.configure(state="disabled")
         except queue.Empty:
             pass
-        if self.in_flight:
+        if self.turn is not None:
             self.elapsed.set(f"{time.monotonic() - self.busy_since:.1f} s")
         self.root.after(POLL_MS, self._poll)
 

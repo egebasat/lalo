@@ -87,11 +87,11 @@ def test_rejected_chat_yields_one_error_and_finishes(monkeypatch):
 
     monkeypatch.setattr(gui_app.requests, "post", lambda *a, **kw: Rejected())
     fake_app = SimpleNamespace(url="http://x", inbox=queue.Queue())
-    gui_app.App._chat(fake_app, {"session_id": "s", "message": "hi"})
+    gui_app.App._chat(fake_app, {"session_id": "s", "message": "hi"}, 7)
     items = []
     while not fake_app.inbox.empty():
         items.append(fake_app.inbox.get_nowait())
     assert items == [
-        ("event", {"type": "error", "message": "HTTP 409: busy: another request is running"}),
-        ("finished", None),
+        ("event", (7, {"type": "error", "message": "HTTP 409: busy: another request is running"})),
+        ("finished", (7, True)),
     ]
