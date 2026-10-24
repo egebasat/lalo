@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import uuid
 from datetime import date
@@ -29,6 +30,15 @@ _TTY = sys.stdout.isatty()
 
 def _dim(text: str) -> str:
     return f"\033[2m{text}\033[0m" if _TTY else text
+
+
+def setup_logging(level: str) -> None:
+    """Our own modules log at `level` (logging.level in config.yaml) to stderr.
+
+    The root stays at WARNING so libraries such as httpx don't print every request.
+    """
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("agent_bot").setLevel(level)
 
 
 def _print_event(event: Event, state: dict) -> None:
@@ -60,6 +70,7 @@ def _print_event(event: Event, state: dict) -> None:
 
 async def _main(args: argparse.Namespace) -> None:
     cfg = load_config()
+    setup_logging(cfg.logging.level)
     if args.model_path:
         cfg.model.path = args.model_path
     if args.backend:

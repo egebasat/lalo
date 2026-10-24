@@ -22,6 +22,8 @@ class ModelConfig(BaseModel):
     backend: Literal["mlx", "transformers", "unsloth"] = "mlx"
     dtype: Literal["bfloat16", "float16", "float32"] = "float32"
     num_threads: int | None = None
+    prompt_cache_size: int = 4  # mlx only: KV caches kept for prefix reuse; 0 disables
+    prompt_cache_gb: float = 2.0  # mlx only: memory cap for those caches
 
 
 class GenerationConfig(BaseModel):

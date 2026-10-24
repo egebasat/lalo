@@ -4,9 +4,11 @@ model:
   backend: mlx              # mlx | transformers | unsloth
   dtype: float32            # transformers only (bf16 is ~14x slower on Mac CPU: 0.33 vs 4.64 tok/s)
   num_threads: null         # transformers only; null = all available
+  prompt_cache_size: 4      # mlx only: KV caches kept so the next call reuses its prefix; 0 disables
+  prompt_cache_gb: 2.0      # mlx only: memory cap (Qwen3-4B KV ~144 KiB/token, ~0.4 GB per 3k tokens)
 
 generation:
-  max_new_tokens: 1024
+  max_new_tokens: 2048
   temperature: 0.6
   top_p: 0.95
   top_k: 20

@@ -1,3 +1,5 @@
+import logging
+import re
 import subprocess
 import sys
 import threading
@@ -113,33 +115,85 @@ def test_create_backend_selects_mlx(monkeypatch):
     assert seen["top_k"] == 7 and seen["cfg"] is cfg
 
 
+class FakeKV:
+    """One layer's KV cache, reduced to the token ids it holds."""
+
+    def __init__(self):
+        self.tokens = []
+
+    def is_trimmable(self):
+        return True
+
+    def trim(self, n):
+        n = min(n, len(self.tokens))
+        del self.tokens[len(self.tokens) - n:]
+        return n
+
+    @property
+    def nbytes(self):
+        return len(self.tokens)
+
+
+GENERATED = "WXYZ"  # the fake model's reply, one token per character
+
+
 class FakeMLX:
-    """Installs a fake mlx_lm package that records the thread each call runs on."""
+    """Installs a fake mlx_lm package that records the thread each call runs on.
+
+    Tokens are characters (`ord`), the chat template concatenates message contents,
+    and the real LRUPromptCache manages FakeKV caches.
+    """
 
     def __init__(self, monkeypatch, fail_after_first=False):
+        import mlx_lm.models.cache as real_cache  # before the fake package shadows it
+
         self.threads = []
         self.sampler_kwargs = None
         self.stream_kwargs = None
+        self.prompts = []  # the token ids each stream_generate call had to process
         self.fail_after_first = fail_after_first
         self.calls = 0
         outer = self
 
         class Tok:
             def apply_chat_template(self, messages, **kwargs):
-                return "prompt"
+                return "".join(m["content"] for m in messages)
+
+            def encode(self, text, add_special_tokens=True):
+                return [ord(c) for c in text]
+
+            def decode(self, ids):
+                return "".join(chr(i) for i in ids)
 
         def load(path):
             outer.threads.append(threading.current_thread().name)
             return "model", Tok()
 
-        def stream_generate(model, tokenizer, prompt, **kwargs):
+        def stream_generate(model, tokenizer, prompt, prompt_cache=None, **kwargs):
             outer.threads.append(threading.current_thread().name)
             outer.stream_kwargs = kwargs
+            outer.prompts.append(list(prompt))
             outer.calls += 1
+            assert len(prompt) > 0, "mlx_lm needs at least one token to process"
+            kv = prompt_cache[0].tokens if prompt_cache else []
+            kv.extend(prompt)
             for i, text in enumerate(["hello", "", " there", " friend"], start=1):
                 if outer.fail_after_first and outer.calls == 1 and i == 2:
                     raise RuntimeError("boom")
-                yield types.SimpleNamespace(text=text, generation_tokens=i)
+                token = ord(GENERATED[i - 1])
+                kv.append(token)  # like mlx_lm, each returned token is already in the cache
+                yield types.SimpleNamespace(text=text, token=token, generation_tokens=i)
+
+        cache = types.ModuleType("mlx_lm.models.cache")
+        cache.LRUPromptCache = real_cache.LRUPromptCache
+        cache.trim_prompt_cache = real_cache.trim_prompt_cache
+        cache.can_trim_prompt_cache = real_cache.can_trim_prompt_cache
+        cache.make_prompt_cache = lambda model: [FakeKV()]
+        models = types.ModuleType("mlx_lm.models")
+        models.__path__ = []
+        models.cache = cache
+        monkeypatch.setitem(sys.modules, "mlx_lm.models", models)
+        monkeypatch.setitem(sys.modules, "mlx_lm.models.cache", cache)
 
         def make_sampler(**kw):
             outer.sampler_kwargs = kw
@@ -200,6 +254,72 @@ def test_mlx_passes_sampling_settings(monkeypatch):
     assert fake.stream_kwargs["max_tokens"] == 8
 
 
+def mlx_generate(backend, *contents):
+    messages = [{"role": "user", "content": c} for c in contents]
+    return "".join(backend.generate(messages, [], enable_thinking=False,
+                                    max_new_tokens=8, temperature=0.0))
+
+
+def test_mlx_next_iteration_processes_only_the_new_tokens(monkeypatch):
+    fake = FakeMLX(monkeypatch)
+    backend = MLXBackend(ModelConfig(path="models/x", backend="mlx"))
+    mlx_generate(backend, "system", "question")
+    assert backend.last_cached_tokens == 0
+    # The next agent iteration: same history plus the reply and a tool result.
+    mlx_generate(backend, "system", "question", "WX", "tool result")
+    shared = len("systemquestionWX")
+    assert backend.last_cached_tokens == shared
+    assert fake.prompts[1] == [ord(c) for c in "tool result"]
+
+
+def test_mlx_identical_prompt_still_processes_one_token(monkeypatch):
+    fake = FakeMLX(monkeypatch)
+    backend = MLXBackend(ModelConfig(path="models/x", backend="mlx"))
+    mlx_generate(backend, "hi")
+    mlx_generate(backend, "hi", GENERATED)  # exactly the tokens already in the cache
+    assert fake.prompts[1] == [ord("Z")]
+    assert backend.last_cached_tokens == len("hiWXY")
+
+
+def test_mlx_failed_generation_is_not_cached(monkeypatch):
+    fake = FakeMLX(monkeypatch, fail_after_first=True)
+    backend = MLXBackend(ModelConfig(path="models/x", backend="mlx"))
+    with pytest.raises(RuntimeError):
+        mlx_generate(backend, "hi")
+    mlx_generate(backend, "hi")
+    assert backend.last_cached_tokens == 0
+    assert fake.prompts[1] == [ord("h"), ord("i")]
+
+
+def test_mlx_logs_the_cache_boundary_before_generating(monkeypatch, caplog):
+    FakeMLX(monkeypatch)
+    backend = MLXBackend(ModelConfig(path="models/x", backend="mlx"))
+    mlx_generate(backend, "system", "question")
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="agent_bot.inference"):
+        mlx_generate(backend, "system", "question", "WX", "tool result")
+    first = caplog.messages[0]
+    assert "reused 16 of 27 tokens" in first
+    assert "questionWX" in first and "tool result" in first  # the end of the reused part, then the new part
+
+
+def test_mlx_logs_time_to_first_token(monkeypatch, caplog):
+    FakeMLX(monkeypatch)
+    backend = MLXBackend(ModelConfig(path="models/x", backend="mlx"))
+    with caplog.at_level(logging.DEBUG, logger="agent_bot.inference"):
+        mlx_generate(backend, "hi")
+    assert any(re.search(r"time to first token: \d+\.\d{2}s", m) for m in caplog.messages)
+
+
+def test_mlx_prompt_cache_can_be_disabled(monkeypatch):
+    fake = FakeMLX(monkeypatch)
+    backend = MLXBackend(ModelConfig(path="models/x", backend="mlx", prompt_cache_size=0))
+    mlx_generate(backend, "hi")
+    mlx_generate(backend, "hi", "WX", "more")
+    assert backend.last_cached_tokens == 0
+    assert fake.prompts[1] == [ord(c) for c in "hiWXmore"]
+
+
 MESSAGES = [{"role": "user", "content": "What time is it in Tokyo?"}]
 
 
@@ -237,3 +357,23 @@ def test_mlx_generate_on_worker_thread():
     t.join(timeout=120)
     assert "error" not in out, out.get("error")
     assert out["text"].strip()
+
+
+@pytest.mark.slow
+def test_mlx_cached_generation_matches_uncached():
+    def turn(backend):
+        history = [*MESSAGES]
+        first = "".join(backend.generate(history, [], enable_thinking=False,
+                                         max_new_tokens=40, temperature=0.0))
+        history += [{"role": "assistant", "content": first},
+                    {"role": "user", "content": "Now say it in one word."}]
+        second = "".join(backend.generate(history, [], enable_thinking=False,
+                                          max_new_tokens=40, temperature=0.0))
+        return second, backend.last_cached_tokens
+
+    cached = MLXBackend(ModelConfig(path="models/Qwen3-1.7B", backend="mlx"))
+    plain = MLXBackend(ModelConfig(path="models/Qwen3-1.7B", backend="mlx", prompt_cache_size=0))
+    cached_text, reused = turn(cached)
+    plain_text, _ = turn(plain)
+    assert reused > 0
+    assert cached_text == plain_text
