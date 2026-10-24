@@ -204,12 +204,20 @@ class App:
 
     # --- transcript ---------------------------------------------------------------
 
-    def _append(self, segments: list[tuple[str, str]]) -> None:
+    def _at_bottom(self) -> bool:
+        return self.transcript.yview()[1] >= 0.999
+
+    def _append(self, segments: list[tuple[str, str]], follow: bool | None = None) -> None:
+        """Follow new output only if the view was already at the bottom, so a user who
+        scrolled up to read isn't pulled back down by every token. follow=True forces it."""
+        if follow is None:
+            follow = self._at_bottom()
         self.transcript.configure(state="normal")
         for text, tag in segments:
             self.transcript.insert("end", text, tag)
         self.transcript.configure(state="disabled")
-        self.transcript.see("end")
+        if follow:
+            self.transcript.see("end")
 
     def _clear_live(self) -> None:
         ranges = self.transcript.tag_ranges("live")
@@ -232,11 +240,13 @@ class App:
 
     def _append_answer(self, text: str) -> None:
         """Answers get Markdown and LaTeX rendering; every other event stays plain."""
+        follow = self._at_bottom()
         self.transcript.configure(state="normal")
         renderer.insert_markdown(self.transcript, text, "answer", self.images)
         self.transcript.insert("end", "\n", "answer")
         self.transcript.configure(state="disabled")
-        self.transcript.see("end")
+        if follow:
+            self.transcript.see("end")
 
     # --- actions (main thread) ----------------------------------------------------
 
@@ -245,7 +255,7 @@ class App:
         if not message:
             return
         self.input.delete("1.0", "end")
-        self._append(render_user(message))
+        self._append(render_user(message), follow=True)
         # Sending while a turn runs is allowed on purpose: the server answers 409 and
         # that shows up as an error, which is clearer than a silently greyed-out button.
         if self.in_flight == 0:
