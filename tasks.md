@@ -18,7 +18,7 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | 10 | Agent server on the host | `curl -N` shows the event stream from `/chat` | ✅ | `3a2bc14` |
 | 11 | tkinter GUI | A full turn shows all event kinds (thinking, tool call, tool result, answer, error) | ✅ | `0d2e39e` |
 | 12 | MCP client + notes server | "Save a note that I like tea" and then "what notes do I have?" works | ✅ | `fd5f240`, `42c4956` |
-| 13 | Tool sandbox (tool server + Docker, headless Chromium) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn; `fetch_page` reads JavaScript-only pages | ⬜ | |
+| 13 | Tool sandbox (tool server + Docker, headless Chromium) | GUI turns use container tools; after `docker compose restart`, a newly added tool shows up on the next turn; `fetch_page` reads JavaScript-only pages | ✅ | `5dec21b` |
 | 14 | Reliability eval + tuning | At least 4 of 5 eval prompts pass in at least 2 of 3 runs | ⬜ | |
 | 15 | README, smoke test, polish | Setup and customization docs, measured speeds, and a manual GUI checklist | ⬜ | |
 | 16 | Approval gate for send tools + Mac apps MCP server (host) | A GUI turn creates an Apple Note; `send_imessage` runs only after the user clicks Approve, and Decline means nothing is sent | ⬜ | |
@@ -41,4 +41,6 @@ Status: ✅ done · ⏳ next · ⬜ not started
 | Prompt cache, Qwen3-4B 8-bit, ~3k-token prompt: time to first token on the next iteration | 6.70 s without the cache, 0.24 s with it (2,992 tokens reused) |
 | Agent CLI, Qwen3-4B 8-bit, "What time is it in Tokyo?" | correct tool call and answer, 2 iterations, 11.6 s |
 | Agent server, real model, "17.5% of 2340" | calculator called, 409.5 correct, 2 iterations, 12.2 s, 488 tokens |
+| Tool sandbox: CLI "17.5% of 2,340", Qwen3-4B 8-bit, thinking off | `calculator` from `sandbox/python`, 409.5 correct, 2 iterations, 6.0 s; the tool call itself took 32 ms |
+| Tool sandbox: `fetch_page` on a JavaScript-only page (headless Chromium) | 1.0 s; container peak 221 MiB of the 2 GiB limit |
 | Tool choice (5 prompts, CPU, thinking off, 1 run) | 5/5 correct tool; the answer to "17.5% of 2,340" was wrong (40,950 instead of 409.5) |
