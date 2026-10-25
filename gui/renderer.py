@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import io
 import re
+import webbrowser
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -24,6 +25,7 @@ from markdown_it import MarkdownIt
 class Span:
     text: str
     tags: tuple[str, ...] = ()
+    href: str | None = None  # set on the text of a link
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,12 @@ class Math:
 
 Segment = Span | Math
 
-_MD = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
+try:  # bare URLs become links when linkify-it-py is installed
+    import linkify_it  # noqa: F401
+    _MD = MarkdownIt("commonmark", {"html": False, "linkify": True}).enable(
+        ["table", "strikethrough", "linkify"])
+except ImportError:
+    _MD = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
 
 # One pass over the raw text. Code comes first so that `$x$` inside backticks or a
 # fence stays code; then display math, then inline math. A single-dollar pair must hug
@@ -77,6 +84,7 @@ class _Builder:
         self.block: str | None = None  # h1..h3 or None
         self.quote = 0
         self.styles: list[str] = []
+        self.hrefs: list[str] = []  # one per open link
         self.table: list[list[str]] | None = None
 
     # --- helpers ------------------------------------------------------------------
@@ -100,14 +108,15 @@ class _Builder:
             return
         styles = sorted(set(self.styles) | set(extra), key=_STYLE_ORDER.index)
         tags = self.block_tags() + tuple(styles)
+        href = self.hrefs[-1] if self.hrefs else None
         pos = 0
         for m in _PLACEHOLDER.finditer(text):
             if m.start() > pos:
-                self.out.append(Span(text[pos:m.start()], tags))
+                self.out.append(Span(text[pos:m.start()], tags, href))
             self.out.append(self.formulas[int(m[1])][0])
             pos = m.end()
         if pos < len(text):
-            self.out.append(Span(text[pos:], tags))
+            self.out.append(Span(text[pos:], tags, href))
 
     def trailing_newlines(self) -> int:
         count = 0
@@ -229,8 +238,12 @@ class _Builder:
                 self.emit(child.content or "[image]")
             elif kind.endswith("_open") and kind[:-5] in ("strong", "em", "s", "link"):
                 self.styles.append({"s": "strike"}.get(kind[:-5], kind[:-5]))
+                if kind == "link_open":
+                    self.hrefs.append(child.attrGet("href") or "")
             elif kind.endswith("_close") and kind[:-6] in ("strong", "em", "s", "link"):
                 self.styles.pop()
+                if kind == "link_close":
+                    self.hrefs.pop()
 
 
 _FENCE_LINE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})[ \t]*([\w+-]*)")
@@ -387,6 +400,24 @@ def _hex_color(widget) -> str:
     return f"#{r >> 8:02x}{g >> 8:02x}{b >> 8:02x}"
 
 
+def _link_tag(widget, href: str) -> str:
+    """One clickable `hrefN` tag per URL in the widget, bound on first use."""
+    links = widget.__dict__.setdefault("_md_links", {})  # tag -> url
+    for tag, url in links.items():
+        if url == href:
+            return tag
+    tag = f"href{len(links)}"
+    links[tag] = href
+    widget.tag_bind(tag, "<Button-1>", lambda _e: open_link(widget, tag))
+    widget.tag_bind(tag, "<Enter>", lambda _e: widget.configure(cursor="hand2"))
+    widget.tag_bind(tag, "<Leave>", lambda _e: widget.configure(cursor=""))
+    return tag
+
+
+def open_link(widget, tag: str) -> None:
+    webbrowser.open(widget._md_links[tag])
+
+
 def insert_markdown(widget, text: str, base_tag: str, images: list) -> None:
     """Insert rendered Markdown at the end of `widget` (which must be state=normal).
 
@@ -402,7 +433,8 @@ def insert_markdown(widget, text: str, base_tag: str, images: list) -> None:
             if break_after and not seg.text.startswith("\n"):
                 widget.insert("end", "\n", base_tag)
             break_after = False
-            widget.insert("end", seg.text, (base_tag, *_tk_tags(seg.tags)))
+            link = (_link_tag(widget, seg.href),) if seg.href else ()
+            widget.insert("end", seg.text, (base_tag, *_tk_tags(seg.tags), *link))
             continue
         png = render_math(seg.latex, seg.display, color, dpi=dpi)
         if png is None:  # unsupported LaTeX: show the source rather than lose it

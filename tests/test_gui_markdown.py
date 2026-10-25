@@ -236,3 +236,45 @@ def test_unclosed_markdown_fence_is_still_rendered():
 def test_other_fences_stay_code():
     segs = parse_markdown("```python\n# not a heading\n```")
     assert [s.tags for s in segs if isinstance(s, Span)] == [("code_block",)]
+
+
+def test_link_span_carries_its_url():
+    [link] = [s for s in parse_markdown("See [the docs](https://example.com/a) now")
+              if "link" in s.tags]
+    assert (link.text, link.href) == ("the docs", "https://example.com/a")
+
+
+def test_styled_text_inside_a_link_keeps_the_url():
+    segs = parse_markdown("[**bold** text](https://example.com)")
+    assert {s.href for s in segs if isinstance(s, Span) and s.text.strip()} == {
+        "https://example.com"}
+
+
+def test_bare_url_becomes_a_link():
+    pytest.importorskip("linkify_it")
+    [link] = [s for s in parse_markdown("Go to https://example.com/x today") if "link" in s.tags]
+    assert (link.text, link.href) == ("https://example.com/x", "https://example.com/x")
+
+
+def test_clicking_a_link_opens_it(monkeypatch):
+    tk = pytest.importorskip("tkinter")
+    from gui import renderer
+    from gui.theme import DARK
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    opened = []
+    monkeypatch.setattr(renderer.webbrowser, "open", opened.append)
+    try:
+        text = tk.Text(root)
+        renderer.configure_tags(text, "Helvetica", 13, "Menlo", DARK)
+        renderer.insert_markdown(text, "[one](https://a.example) and [two](https://b.example)",
+                                 "answer", [])
+        for word in ("one", "two"):
+            start = text.search(word, "1.0")
+            [tag] = [t for t in text.tag_names(start) if t.startswith("href")]
+            renderer.open_link(text, tag)
+        assert opened == ["https://a.example", "https://b.example"]
+    finally:
+        root.destroy()

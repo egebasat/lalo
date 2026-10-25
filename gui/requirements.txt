@@ -1,4 +1,5 @@
 # GUI client dependencies (tkinter ships with Python)
 requests
 markdown-it-py  # answer Markdown
+linkify-it-py   # bare URLs in answers become links
 matplotlib      # LaTeX formulas as images; without it they show as source
