@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 import math
 import operator
 from datetime import datetime
@@ -10,6 +11,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from agent_bot.registry import ToolRegistry, function_tool, tool
+
+log = logging.getLogger(__name__)
+
+MIN_PAGE_TEXT = 200  # less than this from the plain HTML usually means a JavaScript-only page
 
 
 @tool
@@ -49,9 +54,38 @@ def fetch_page(url: str, max_chars: int = 4000) -> str:
     )
     resp.raise_for_status()
     text = trafilatura.extract(resp.text)
-    if text is None:
+    if text is None or len(text) < MIN_PAGE_TEXT:
+        # Probably rendered by JavaScript: let headless Chromium run it and try again.
+        try:
+            rendered = trafilatura.extract(_render_with_browser(url))
+        except ImportError:  # no Playwright (e.g. on the host): keep what we have
+            rendered = None
+        except Exception as exc:
+            log.warning("browser render of %s failed: %s: %s", url, type(exc).__name__, exc)
+            rendered = None
+        if rendered and len(rendered) > len(text or ""):
+            text = rendered
+    if not text:
         raise ValueError(f"Could not extract readable text from {url}")
     return text[:max_chars]
+
+
+def _render_with_browser(url: str, timeout_s: float = 15) -> str:
+    """The page's HTML after its JavaScript has run, from headless Chromium.
+
+    The sync Playwright API is fine here: sync tools run in asyncio.to_thread, a thread
+    with no event loop. Playwright is only installed in the sandbox image.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=timeout_s * 1000)
+            return page.content()
+        finally:
+            browser.close()
 
 
 @tool

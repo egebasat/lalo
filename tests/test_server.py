@@ -179,3 +179,73 @@ def test_chat_503_while_loading(make_config, monkeypatch):
 def test_empty_message_422(make_config):
     with TestClient(create_app(make_config(), backend=FakeBackend([]))) as client:
         assert client.post("/chat", json={"session_id": "s1", "message": ""}).status_code == 422
+
+
+def test_chat_with_sandbox_down_emits_error_then_completes(make_config):
+    import socket
+
+    from agent_bot.config import McpServerConfig
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    cfg = make_config(local_python_tools=False)
+    cfg.mcp_servers = {"sandbox": McpServerConfig(url=f"http://127.0.0.1:{port}/mcp")}
+    with TestClient(create_app(cfg, backend=FakeBackend(["Hi"]))) as client:
+        events = chat(client)
+    assert events[0]["type"] == "error"
+    assert "Tool sandbox unreachable" in events[0]["message"]
+    assert "is the container running?" in events[0]["message"]
+    kinds = [e["type"] for e in events]
+    assert "answer" in kinds and kinds[-1] == "done"
+
+
+def test_tools_reports_unreachable_sandbox(make_config):
+    import socket
+
+    from agent_bot.config import McpServerConfig
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    cfg = make_config(local_python_tools=False)
+    cfg.mcp_servers = {"sandbox": McpServerConfig(url=f"http://127.0.0.1:{port}/mcp")}
+    with TestClient(create_app(cfg, backend=FakeBackend([]))) as client:
+        body = client.get("/tools").json()
+    assert body["tools"] == []
+    assert body["mcp_servers"][0]["name"] == "sandbox"
+    assert body["mcp_servers"][0]["status"] == "failed"
+
+
+def test_disconnect_with_sandbox_connected(make_config, tmp_path, caplog):
+    """A client leaving mid-turn while the sandbox session is open: the session closes
+    cleanly, the lock is released, and the next turn reconnects and uses the tools."""
+    from agent_bot.config import McpServerConfig
+    from tests.test_tool_server import RunningServer, free_port, sandbox_cfg
+
+    sandbox = RunningServer(sandbox_cfg(tmp_path / "notes.json"), free_port())
+    call = '<tool_call>\n{"name": "calculator", "arguments": {"expression": "6 * 7"}}\n</tool_call>'
+    backend = _SlowFirstBackend([call, "42."])
+    cfg = make_config(local_python_tools=False)
+    cfg.mcp_servers = {"sandbox": McpServerConfig(url=f"{sandbox.url}/mcp")}
+    try:
+        with TestClient(create_app(cfg, backend=backend)) as client:
+            with client.stream("POST", "/chat", json={"session_id": "s1", "message": "one"}) as resp:
+                assert json.loads(next(resp.iter_lines()))["type"] == "token"
+            # closed mid-turn: the client disconnected
+            backend.release.set()
+
+            start = time.monotonic()
+            while time.monotonic() - start < 5:
+                second = client.post("/chat", json={"session_id": "s2", "message": "two"})
+                if second.status_code != 409:
+                    break
+            assert second.status_code == 200
+            events = [json.loads(line) for line in second.text.splitlines() if line]
+        result = next(e for e in events if e["type"] == "tool_result")
+        assert result["content"] == "42" and not result["is_error"]
+        assert not [e for e in events if e["type"] == "error"]
+        assert "different task" not in caplog.text
+    finally:
+        backend.release.set()
+        sandbox.stop()

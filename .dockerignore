@@ -1,0 +1,10 @@
+models/
+data/
+.venv/
+.git/
+.env
+__pycache__/
+tests/
+docs/
+gui/
+.claude/

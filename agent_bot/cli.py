@@ -1,9 +1,10 @@
 """Run one agent turn from the terminal and print every event as it happens.
 
-    python -m agent_bot.cli "What time is it in Tokyo?" [--no-thinking]
+    python -m agent_bot.cli "What time is it in Tokyo?" [--no-thinking] [--local-tools]
         [--model-path P] [--backend mlx|transformers|unsloth]
 
-Python tools run in-process here; the sandboxed setup is wired in by the server.
+Tools come from the Docker sandbox, like in the server, unless --local-tools (or
+agent.local_python_tools) runs the Python tools in this process instead.
 """
 from __future__ import annotations
 
@@ -13,13 +14,15 @@ import json
 import logging
 import sys
 import uuid
+from contextlib import AsyncExitStack
 from datetime import date
 from pathlib import Path
 
 from agent_bot.agent import RunSettings, run
 from agent_bot.config import load_config
-from agent_bot.events import Event
+from agent_bot.events import Error, Event
 from agent_bot.inference import create_backend
+from agent_bot.mcp_tools import connect_mcp_servers, failure_messages, tool_timeout, turn_tools
 from agent_bot.parsing import get_parser
 from agent_bot.registry import ToolRegistry
 from agent_bot.tools import register_python_tools
@@ -79,7 +82,11 @@ async def _main(args: argparse.Namespace) -> None:
     print(_dim(f"Loading {cfg.model.path} ({cfg.model.backend})…"), flush=True)
     backend = create_backend(cfg.model, cfg.generation)
     registry = ToolRegistry(cfg.tools.max_result_chars, cfg.tools.disabled)
-    register_python_tools(registry)
+    local = args.local_tools or cfg.agent.local_python_tools
+    if local:
+        register_python_tools(registry)
+    # The sandbox (any url server) is skipped when its tools run in this process instead.
+    per_turn = {} if local else cfg.mcp_servers
 
     template = Path(cfg.agent.system_prompt_file).read_text(encoding="utf-8")
     settings = RunSettings(
@@ -88,28 +95,41 @@ async def _main(args: argparse.Namespace) -> None:
         max_new_tokens=cfg.generation.max_new_tokens,
         temperature=cfg.generation.temperature,
         max_iterations=cfg.agent.max_iterations,
-        tool_timeout_s=cfg.tools.timeout_s,
+        tool_timeout_s=cfg.tools.timeout_s if local else tool_timeout(cfg),
     )
     tracer = (JsonlTracer(Path(cfg.logging.trace_dir), uuid.uuid4().hex)
               if cfg.logging.trace_dir else NullTracer())
 
     history = [{"role": "user", "content": args.prompt}]
     state: dict = {}
-    async for event in run(history, backend=backend, parser=get_parser(backend.model_family),
-                           registry=registry, settings=settings, tracer=tracer):
-        _print_event(event, state)
+    async with AsyncExitStack() as stack:
+        stdio = {n: c for n, c in cfg.mcp_servers.items() if c.command}
+        await connect_mcp_servers(stdio, registry, stack)
+        async with turn_tools(per_turn, registry) as statuses:
+            for message in failure_messages(per_turn, statuses):
+                _print_event(Error(message), state)
+            async for event in run(history, backend=backend,
+                                   parser=get_parser(backend.model_family),
+                                   registry=registry, settings=settings, tracer=tracer):
+                _print_event(event, state)
     if isinstance(tracer, JsonlTracer) and tracer.path:
         print(_dim(f"trace: {tracer.path}"))
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one agent turn in the terminal.")
     parser.add_argument("prompt")
     parser.add_argument("--no-thinking", action="store_true", help="disable Qwen3 thinking mode")
+    parser.add_argument("--local-tools", action="store_true",
+                        help="run the Python tools in this process instead of the Docker sandbox")
     parser.add_argument("--model-path", help="override model.path from config.yaml")
     parser.add_argument("--backend", choices=["mlx", "transformers", "unsloth"],
                         help="override model.backend from config.yaml")
-    asyncio.run(_main(parser.parse_args()))
+    return parser
+
+
+def main() -> None:
+    asyncio.run(_main(build_parser().parse_args()))
 
 
 if __name__ == "__main__":
