@@ -14,12 +14,13 @@ import html
 import json
 import logging
 import re
+import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from agent_bot.config import MacToolsConfig
-from agent_bot.registry import ToolError
+from agent_bot.config import AppConfig, MacToolsConfig
+from agent_bot.registry import ToolError, ToolRegistry, function_tool
 
 log = logging.getLogger(__name__)
 
@@ -377,3 +378,27 @@ def append_to_apple_note(note_id: str, text: str) -> str:
 
 NOTES_TOOLS = [create_apple_note, list_apple_notes, search_apple_notes,
                read_apple_note, update_apple_note, append_to_apple_note]
+
+
+# --- Registration ------------------------------------------------------------------
+
+TIMEOUT_HINT = ("Notes/Mail didn't answer in time; the action may still complete. "
+                "Check with list_apple_notes before retrying.")
+
+
+def register_mac_tools(registry: ToolRegistry, cfg: MacToolsConfig,
+                       state_path: Path = DEFAULT_STATE) -> None:
+    """Register the Mac tools. Nothing runs yet: the first tool call launches the app."""
+    configure(cfg, state_path)
+    for fn in NOTES_TOOLS:
+        t = function_tool(fn, source="mac")
+        t.timeout_s, t.timeout_hint = cfg.timeout_s, TIMEOUT_HINT
+        registry.register(t)
+
+
+def maybe_register_mac_tools(registry: ToolRegistry, cfg: AppConfig) -> bool:
+    """Register the Mac tools when this is a Mac and config.yaml turns them on."""
+    if sys.platform != "darwin" or not cfg.mac_tools.enabled:
+        return False
+    register_mac_tools(registry, cfg.mac_tools)
+    return True

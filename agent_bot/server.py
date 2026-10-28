@@ -28,6 +28,7 @@ from agent_bot.agent import RunSettings, run
 from agent_bot.config import AppConfig, load_config
 from agent_bot.events import Error
 from agent_bot.inference import Backend, create_backend
+from agent_bot.mac_tools import maybe_register_mac_tools
 from agent_bot.mcp_tools import (McpServerStatus, connect_mcp_servers, failure_messages,
                                  tool_timeout, turn_tools)
 from agent_bot.parsing import get_parser
@@ -97,6 +98,7 @@ def create_app(config: AppConfig | None = None, backend: Backend | None = None) 
         state.registry = ToolRegistry(cfg.tools.max_result_chars, cfg.tools.disabled)
         if cfg.agent.local_python_tools:
             register_python_tools(state.registry)
+        maybe_register_mac_tools(state.registry, cfg)
         state.prompt_template = Path(cfg.agent.system_prompt_file).read_text(encoding="utf-8")
         loading = None
         if state.backend is None:

@@ -22,6 +22,7 @@ from agent_bot.agent import RunSettings, run
 from agent_bot.config import load_config
 from agent_bot.events import Error, Event
 from agent_bot.inference import create_backend
+from agent_bot.mac_tools import maybe_register_mac_tools
 from agent_bot.mcp_tools import connect_mcp_servers, failure_messages, tool_timeout, turn_tools
 from agent_bot.parsing import get_parser
 from agent_bot.registry import ToolRegistry
@@ -85,6 +86,7 @@ async def _main(args: argparse.Namespace) -> None:
     local = args.local_tools or cfg.agent.local_python_tools
     if local:
         register_python_tools(registry)
+    maybe_register_mac_tools(registry, cfg)
     # The sandbox (any url server) is skipped when its tools run in this process instead.
     per_turn = {} if local else cfg.mcp_servers
 

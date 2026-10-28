@@ -229,3 +229,34 @@ def test_note_outside_folder_message(notes):
 def test_read_format(notes):
     notes.responses["notes_read"] = rec(NID, "T", 2026, 10, 28, 53587, "T\nline 1\nline 2\n")
     assert read_apple_note(NID) == "Title: T\nModified: 2026-10-28T14:53\n\nline 1\nline 2"
+
+
+# --- Registration ------------------------------------------------------------------
+
+from agent_bot.config import AppConfig, ModelConfig  # noqa: E402
+from agent_bot.registry import ToolRegistry  # noqa: E402
+
+NOTES_TOOL_NAMES = ["create_apple_note", "list_apple_notes", "search_apple_notes",
+                    "read_apple_note", "update_apple_note", "append_to_apple_note"]
+
+
+def test_register_mac_tools(fake, state):
+    reg = ToolRegistry()
+    mac_tools.register_mac_tools(reg, MacToolsConfig(enabled=True), state)
+    assert [t.name for t in reg.tools()] == NOTES_TOOL_NAMES
+    assert all(t.source == "mac" and t.timeout_s == 60 for t in reg.tools())
+    assert all("may still complete" in t.timeout_hint for t in reg.tools())
+    assert fake.calls == []  # registering never launches Notes
+
+
+def test_maybe_register_platform_and_flag(fake, monkeypatch):
+    def attempt(platform, enabled):
+        monkeypatch.setattr(sys, "platform", platform)
+        cfg = AppConfig(model=ModelConfig(path="m"))
+        cfg.mac_tools.enabled = enabled
+        reg = ToolRegistry()
+        return mac_tools.maybe_register_mac_tools(reg, cfg), len(reg.tools())
+
+    assert attempt("linux", True) == (False, 0)
+    assert attempt("darwin", False) == (False, 0)
+    assert attempt("darwin", True) == (True, len(NOTES_TOOL_NAMES))

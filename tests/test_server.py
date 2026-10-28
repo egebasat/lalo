@@ -249,3 +249,16 @@ def test_disconnect_with_sandbox_connected(make_config, tmp_path, caplog):
     finally:
         backend.release.set()
         sandbox.stop()
+
+
+def test_tools_include_mac_tools_when_enabled(make_config, monkeypatch):
+    import sys
+
+    with TestClient(create_app(make_config(), backend=FakeBackend([]))) as client:
+        assert all(t["source"] != "mac" for t in client.get("/tools").json()["tools"])
+    monkeypatch.setattr(sys, "platform", "darwin")
+    cfg = make_config()
+    cfg.mac_tools.enabled = True
+    with TestClient(create_app(cfg, backend=FakeBackend([]))) as client:
+        tools = {t["name"]: t["source"] for t in client.get("/tools").json()["tools"]}
+    assert tools["create_apple_note"] == "mac"
