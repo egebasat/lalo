@@ -20,7 +20,7 @@ The owner wants AppleScript, and tool calls fast enough to keep agent loops quic
 - A Mail tool that opens a filled-in draft and never sends it.
 - In-process AppleScript (PyObjC), registered in the host agent server, with no second server process.
 - Unit tests that run without Notes or Mail, plus opt-in tests against the real apps.
-- **Apple Notes replaces the JSON notes tools** (`add_note`, `list_notes`, `search_notes` in `agent_bot/tools.py`). They are deleted at the end of this task, once the Apple Notes tools work (§5.9).
+- **Apple Notes replaces the JSON notes tools** (`add_note`, `list_notes`, `search_notes` in `agent_bot/tools.py`). They are deleted as the first step of this task (§5.0).
 
 **Non-goals (this task)**
 - iMessage, Reminders, Shortcuts, `open_app`, and the Approve/Decline gate. They come in a later task, once Notes and Mail work well.
@@ -40,7 +40,7 @@ The owner wants AppleScript, and tool calls fast enough to keep agent loops quic
 - **Notes boundary:** the agent sees only notes it created, in its own folder (default name "Agent").
 - **Mechanism:** AppleScript run in-process through PyObjC's `NSAppleScript` (the owner preferred AppleScript and asked for speed). The tools are plain host tools registered in `agent_bot/server.py`, not an MCP server.
 - **Mail:** draft only. The agent writes the subject and body itself.
-- **Replacing the JSON notes:** Apple Notes becomes the agent's only notebook. The JSON notes tools are deleted after the Apple Notes tools are implemented and working.
+- **Replacing the JSON notes:** Apple Notes becomes the agent's only notebook. The JSON notes tools are deleted first, before the Apple Notes tools are built.
 
 ## 4. What the spike measured (2026-10-28, this Mac, Notes on macOS 26)
 
@@ -62,6 +62,17 @@ The throwaway script is `notes_spike.py` in the session scratchpad. It is not pa
 Mail was not tested in the spike.
 
 ## 5. Design
+
+### 5.0 First step: delete the JSON notes tools
+
+Apple Notes replaces the JSON notes, so this cleanup happens before any Mac tool is built (owner's decision):
+- `agent_bot/tools.py`: delete `_notes_path`, `_load_notes`, `_save_notes`, `add_note`, `list_notes` and `search_notes`, plus any imports only they used.
+- `docker-compose.yml`: drop the `NOTES_FILE` environment line.
+- `scripts/eval.py`: stop importing `_notes_path`, and use the `NOTES_FILE` constant for both modes. `reset_notes` and its test stay as they are. **The eval's two notes prompts (`dentist_recall`, `remember_wifi`) will fail from here on, because the tools they expect are gone.** Reworking the eval onto Apple Notes isn't part of this task, so the eval isn't a check for it.
+- Tests: delete the JSON notes tests in `tests/test_tools.py` and update the expected tool-name list there. In `tests/test_tool_server.py:101`, check a different sandbox tool's `source`. `tests/test_parsing.py:76` only uses `list_notes` as a sample name and can stay. The full test suite passes after this step.
+- Docs: update `docs/tool-calling-and-mcp.md` and `docs/agent-loop.md` if they list the JSON notes tools.
+- **`data/notes.json` is left on disk, untouched.** It may hold the owner's saved notes, and migrating them isn't part of this task. The final report tells the owner the file is still there.
+- `prompts/system.md`: until the Apple Notes tools exist, the "saved notes" wording refers to tools that aren't there. That's harmless, and §5.6 rewrites it.
 
 ### 5.1 Where the code lives
 
@@ -115,7 +126,7 @@ A note the owner moves out of the folder becomes invisible to the agent. That is
 
 ### 5.4 Notes tools
 
-Names carry `apple_`. While both sets exist during the build, the prefix keeps them apart from the JSON tools. After §5.9 it still helps the model link "my notes" and "the Notes app" to these tools. *(Builder's call: keep the prefix.)* Docstrings are Google-style with `Args:`, since `function_tool` builds the schema from them and the model reads them. Each docstring says the tool works only inside the agent's own folder in Apple Notes.
+Names carry `apple_`. It helps the model link "my notes" and "the Notes app" to these tools. *(Builder's call: keep the prefix.)* Docstrings are Google-style with `Args:`, since `function_tool` builds the schema from them and the model reads them. Each docstring says the tool works only inside the agent's own folder in Apple Notes.
 
 | Tool | Does | Returns |
 |---|---|---|
@@ -165,31 +176,13 @@ The existing rule that mentions "the user's saved notes" stays and now refers to
 - The server registers Mac tools only when `darwin` and `enabled` (with `sys.platform` monkeypatched).
 - Importing `agent_bot.mac_tools` works without PyObjC. The PyObjC import happens inside the runner.
 
-**Real-app tests (`tests/test_mac_tools_live.py`)** are skipped unless `RUN_MAC_TESTS=1` is set on macOS. They use a throwaway folder name and state file, and in `finally` they delete everything they created:
+**Real-app tests (`tests/test_mac_tools_live.py`)** are skipped unless `RUN_MAC_TESTS=1` is set on macOS. They use a throwaway folder name and state file (`register_mac_tools` takes the state-file path as a parameter, defaulting to `data/mac_tools.json`), and in `finally` they delete everything they created:
 - create → list → search → read → update → append round trip, with the ids staying stable.
 - A note in a second throwaway folder can't be read, updated or appended through the tools.
 - Median timing for list and read over 10 runs, printed so it can be recorded in `tasks.md`.
 - Mail: open one draft to `test@example.com`, check that it's open with the right recipient and subject, and close it without saving. No send.
 
-### 5.8 The reliability eval
-
-`scripts/eval.py` builds its own registry, and two prompts in `evals/prompts.yaml` use notes: `dentist_recall` (seeded notes, expects `list_notes`/`search_notes`) and `remember_wifi` (expects `add_note` with `pine-cone-42`). After §5.9 those prompts must exercise Apple Notes:
-- The eval calls `register_mac_tools` on its registry (macOS only, like the server) with a config whose `notes_folder` is `agent_bot eval` and whose state file is a temp path. Its notes then never mix with the owner's Agent folder. `register_mac_tools` takes the state-file path as a parameter, defaulting to `data/mac_tools.json`, so the eval and the live tests can redirect it.
-- `reset_notes` / `seed_notes` keep their meaning: before the prompt, delete the eval folder if it exists, create a fresh one, and create each seed as a note whose title is its first line. After the prompt, delete the folder (`finally`). The JSON-file backup and restore code goes away.
-- Expected tools: `dentist_recall` → `[list_apple_notes, search_apple_notes]`. `remember_wifi` → `create_apple_note` with `body` containing `pine-cone-42`. Allow `append_to_apple_note` too if the model reasonably appends to an existing note; with a fresh folder there is none, so this is unlikely. `tests/test_eval_checks.py` is updated to the new names.
-- The eval target stays as it is (5 of 6 prompts in at least 2 of 3 runs), and it's the regression check for this task.
-
-### 5.9 Deleting the JSON notes tools
-
-This is the last step, done only after the Apple Notes tools pass their live tests and the eval:
-- `agent_bot/tools.py`: delete `_notes_path`, `_load_notes`, `_save_notes`, `add_note`, `list_notes` and `search_notes`, plus any imports only they used.
-- `docker-compose.yml`: drop the `NOTES_FILE` environment line.
-- `scripts/eval.py`: drop `NOTES_FILE` and `_notes_path` (replaced by §5.8).
-- Tests: delete the JSON notes tests in `tests/test_tools.py` and update the expected tool-name list there. In `tests/test_tool_server.py:101`, check a different sandbox tool's `source`. `tests/test_parsing.py:76` only uses `list_notes` as a sample name and can stay.
-- Docs: update `docs/tool-calling-and-mcp.md` and `docs/agent-loop.md` if they list the JSON notes tools.
-- **`data/notes.json` is left on disk, untouched.** It may hold the owner's saved notes. Migrating them is not part of this task. The final report tells the owner the file is still there.
-
-### 5.10 Docs and tracker
+### 5.8 Docs and tracker
 
 - `README.md`: a "Mac apps" section covering the Automation permission prompt and where to fix it, the Agent folder, draft-only Mail, and the §5.3 limit.
 - `tasks.md`: rewrite the Task 16 row to this scope. Add a new row for the deferred iMessage, Reminders, Shortcuts and approval-gate work. Record the measured timings.
@@ -202,7 +195,7 @@ This is the last step, done only after the Apple Notes tools pass their live tes
 3. "Email bob@example.com that I'll be late" opens a Mail draft with a subject and body the model wrote, and it is not sent.
 4. Trying to reach a note outside the folder by id gets a refusal from the tool (live test).
 5. The unit tests pass on the host. The live tests pass with `RUN_MAC_TESTS=1`. Timings are in `tasks.md`.
-6. The JSON notes tools are gone (§5.9). `python -m scripts.eval` passes its target with the notes prompts running on Apple Notes.
+6. The JSON notes tools are gone (§5.0) and the full test suite passes.
 
 ## 7. Left to the builder
 
@@ -213,8 +206,7 @@ This is the last step, done only after the Apple Notes tools pass their live tes
 
 ## 8. Settled during review
 
-- **JSON notes vs Apple Notes (owner):** Apple Notes replaces the JSON notes tools, which are deleted after the Apple Notes tools work (§5.8, §5.9).
+- **JSON notes vs Apple Notes (owner):** Apple Notes replaces the JSON notes tools, which are deleted as the first step (§5.0). The eval isn't updated in this task (owner).
 - **Folder adoption (builder's call):** always create a new folder, never adopt an existing one (§5.3).
 - **Timeouts (builder's call):** a per-tool `timeout_s` on `Tool`, with Mac tools at 60 s (§5.2).
-- **Eval isolation (builder's call):** a separate `agent_bot eval` folder, created and deleted for each notes prompt (§5.8).
-- **Keeping `data/notes.json` (builder's call):** left on disk, not migrated (§5.9).
+- **Keeping `data/notes.json` (builder's call):** left on disk, not migrated (§5.0).
