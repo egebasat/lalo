@@ -388,10 +388,28 @@ TIMEOUT_HINT = ("Notes/Mail didn't answer in time; the action may still complete
                 "Check with list_apple_notes before retrying.")
 
 
+def _init_applescript() -> None:
+    """Use AppleScript once on this thread, which must be the main thread.
+
+    If AppleScript is first used on a background thread, replies to the Apple Events it
+    sends never arrive: the app does the work, but every call waits out AppleScript's
+    2-minute timeout (-1712). The server runs tools on worker threads, so it has to be
+    initialized here first. The script contacts no app, so Notes isn't launched.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        log.warning("Mac tools registered off the main thread; AppleScript calls may time out")
+    try:
+        run_source('on run argv\nreturn "ok"\nend run')
+    except ImportError:
+        log.warning("PyObjC isn't installed (pip install pyobjc-framework-Cocoa); Mac tools will fail")
+
+
 def register_mac_tools(registry: ToolRegistry, cfg: MacToolsConfig,
                        state_path: Path = DEFAULT_STATE) -> None:
-    """Register the Mac tools. Nothing runs yet: the first tool call launches the app."""
+    """Register the Mac tools. Call from the main thread. No app is launched until the first
+    tool call."""
     configure(cfg, state_path)
+    _init_applescript()
     for fn in NOTES_TOOLS:
         t = function_tool(fn, source="mac")
         t.timeout_s, t.timeout_hint = cfg.timeout_s, TIMEOUT_HINT

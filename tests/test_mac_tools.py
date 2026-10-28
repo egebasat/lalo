@@ -38,6 +38,7 @@ def state(tmp_path):
 def fake(monkeypatch, state):
     runner = FakeRunner()
     monkeypatch.setattr(mac_tools, "run_script", runner)
+    monkeypatch.setattr(mac_tools, "run_source", lambda src, *argv: "ok")  # never the real runner
     mac_tools.configure(MacToolsConfig(enabled=True), state)
     return runner
 
@@ -256,6 +257,24 @@ def test_register_mac_tools(fake, state):
     assert all(t.source == "mac" and t.timeout_s == 60 for t in reg.tools())
     assert all("may still complete" in t.timeout_hint for t in reg.tools())
     assert fake.calls == []  # registering never launches Notes
+
+
+def test_register_initializes_applescript_on_calling_thread(fake, state, monkeypatch):
+    """AppleScript's first use must be on the main thread, or replies to Apple Events sent
+    from the server's worker threads never arrive (every call times out with -1712)."""
+    seen = []
+    monkeypatch.setattr(mac_tools, "run_source", lambda src, *argv: seen.append(src) or "ok")
+    mac_tools.register_mac_tools(ToolRegistry(), MacToolsConfig(enabled=True), state)
+    assert len(seen) == 1 and "tell application" not in seen[0]  # contacts no app
+
+
+def test_register_survives_missing_pyobjc(fake, state, monkeypatch):
+    def no_pyobjc(src, *argv):
+        raise ImportError("No module named 'Foundation'")
+    monkeypatch.setattr(mac_tools, "run_source", no_pyobjc)
+    reg = ToolRegistry()
+    mac_tools.register_mac_tools(reg, MacToolsConfig(enabled=True), state)
+    assert len(reg.tools()) == len(NOTES_TOOL_NAMES)
 
 
 def test_maybe_register_platform_and_flag(fake, monkeypatch):
