@@ -25,7 +25,6 @@ def test_loads_defaults_from_yaml():
     assert cfg.server.host == "127.0.0.1"
     assert cfg.mcp_servers["sandbox"].url == "http://127.0.0.1:8001/mcp"
     assert cfg.sandbox.port == 8001
-    assert cfg.sandbox.mcp_servers["local_notes"].command == "python"
     assert cfg.sandbox.mcp_servers["fetch"].enabled is False
     assert cfg.agent.local_python_tools is False  # tools run in the Docker sandbox
     assert cfg.agent.max_iterations == 6

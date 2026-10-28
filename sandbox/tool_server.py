@@ -5,7 +5,7 @@
 The host agent connects to http://127.0.0.1:8001/mcp once per turn and sees one MCP
 server ("sandbox") whose tools are this process's Python tools plus the tools of the
 MCP servers listed under `sandbox.mcp_servers`. Each tool's original source travels in
-its `_meta`, so the GUI can still tell "sandbox/python" from "sandbox/mcp:local_notes".
+its `_meta`, so the GUI can still tell "sandbox/python" from "sandbox/mcp:fetch".
 
 This module must never import the model side (agent_bot.inference / agent_bot.agent,
 mlx, torch): the image has no weights and no torch.

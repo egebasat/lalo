@@ -223,7 +223,7 @@ def test_disconnect_with_sandbox_connected(make_config, tmp_path, caplog):
     from agent_bot.config import McpServerConfig
     from tests.test_tool_server import RunningServer, free_port, sandbox_cfg
 
-    sandbox = RunningServer(sandbox_cfg(tmp_path / "notes.json"), free_port())
+    sandbox = RunningServer(sandbox_cfg(), free_port())
     call = '<tool_call>\n{"name": "calculator", "arguments": {"expression": "6 * 7"}}\n</tool_call>'
     backend = _SlowFirstBackend([call, "42."])
     cfg = make_config(local_python_tools=False)

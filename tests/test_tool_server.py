@@ -26,10 +26,8 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def sandbox_cfg(notes_file, *, python_tools=True, timeout_s=20, extra_servers=None) -> AppConfig:
-    servers = {"notes": McpServerConfig(command=sys.executable,
-                                        args=["-m", "mcp_servers.notes_server"],
-                                        env={"NOTES_FILE": str(notes_file)})}
+def sandbox_cfg(*, python_tools=True, timeout_s=20, extra_servers=None) -> AppConfig:
+    servers = {"echo": McpServerConfig(command=sys.executable, args=["-m", "tests.echo_mcp_server"])}
     servers.update(extra_servers or {})
     return AppConfig(model=ModelConfig(path="models/fake"),
                      tools=ToolsConfig(timeout_s=timeout_s),
@@ -79,28 +77,29 @@ def start_server():
 
 
 @pytest.fixture
-def tool_server_url(start_server, tmp_path):
-    return start_server(sandbox_cfg(tmp_path / "notes.json")).url
+def tool_server_url(start_server):
+    return start_server(sandbox_cfg()).url
 
 
 def sandbox(url: str) -> dict[str, McpServerConfig]:
     return {"sandbox": McpServerConfig(url=f"{url}/mcp")}
 
 
-def test_health_lists_counts(start_server, tmp_path):
-    body = start_server(sandbox_cfg(tmp_path / "notes.json")).health()
+def test_health_lists_counts(start_server):
+    body = start_server(sandbox_cfg()).health()
     assert body["status"] == "ok"
-    assert body["tools"] == 7
-    assert body["mcp_servers"][0]["name"] == "notes"
+    assert body["tools"] == 8
+    assert body["mcp_servers"][0]["name"] == "echo"
     assert body["mcp_servers"][0]["status"] == "connected"
 
 
 async def test_host_sees_sandbox_tools_with_sources(tool_server_url):
     reg = ToolRegistry()
     async with turn_tools(sandbox(tool_server_url), reg) as statuses:
-        assert statuses[0].status == "connected" and statuses[0].tool_count == 7
+        assert statuses[0].status == "connected" and statuses[0].tool_count == 8
         assert reg.get("calculator").source == "sandbox/python"
-        assert reg.get("add_note").source == "sandbox/mcp:notes"
+        assert reg.get("add_note").source == "sandbox/python"
+        assert reg.get("echo").source == "sandbox/mcp:echo"
         assert all(t.origin == "sandbox" for t in reg.tools())
 
 
@@ -122,7 +121,7 @@ async def test_error_crosses_boundary_verbatim(tool_server_url):
     assert "RuntimeError" not in result.content
 
 
-async def test_sandbox_timeout_message_wins(start_server, tmp_path, monkeypatch):
+async def test_sandbox_timeout_message_wins(start_server, monkeypatch):
     async def sleepy() -> str:
         """Sleep for a long time."""
         await asyncio.sleep(10)
@@ -135,7 +134,7 @@ async def test_sandbox_timeout_message_wins(start_server, tmp_path, monkeypatch)
         registry.register(function_tool(sleepy))
 
     monkeypatch.setattr(tool_server, "register_python_tools", with_sleepy)
-    url = start_server(sandbox_cfg(tmp_path / "notes.json", timeout_s=0.2)).url
+    url = start_server(sandbox_cfg(timeout_s=0.2)).url
     reg = ToolRegistry()
     async with turn_tools(sandbox(url), reg):
         result = await reg.call("sleepy", {}, 5)
@@ -161,27 +160,26 @@ async def test_unreachable_sandbox_drops_tools_from_an_earlier_turn(tool_server_
         assert reg.tools() == []
 
 
-async def test_tools_refresh_per_turn(start_server, tmp_path):
-    notes = tmp_path / "notes.json"
-    first = start_server(sandbox_cfg(notes))
+async def test_tools_refresh_per_turn(start_server):
+    first = start_server(sandbox_cfg())
     reg = ToolRegistry()
     async with turn_tools(sandbox(first.url), reg):
-        assert len(reg.tools()) == 7
+        assert len(reg.tools()) == 8
     first.stop()  # like `docker compose restart` with a changed config
-    second = start_server(sandbox_cfg(notes, python_tools=False), port=first.port)
+    second = start_server(sandbox_cfg(python_tools=False), port=first.port)
     async with turn_tools(sandbox(second.url), reg):
-        assert sorted(t.name for t in reg.tools()) == ["add_note", "list_notes", "search_notes"]
+        assert sorted(t.name for t in reg.tools()) == ["echo"]
 
 
-def test_broken_inner_server_does_not_stop_sandbox(start_server, tmp_path):
+def test_broken_inner_server_does_not_stop_sandbox(start_server):
     broken = {"broken": McpServerConfig(command="definitely-not-a-binary")}
-    body = start_server(sandbox_cfg(tmp_path / "notes.json", extra_servers=broken)).health()
+    body = start_server(sandbox_cfg(extra_servers=broken)).health()
     assert body["status"] == "ok"
     status = {s["name"]: s for s in body["mcp_servers"]}
     assert status["broken"]["status"] == "failed"
     assert status["broken"]["error"]
-    assert status["notes"]["status"] == "connected"
-    assert body["tools"] == 7
+    assert status["echo"]["status"] == "connected"
+    assert body["tools"] == 8
 
 
 async def test_host_header_must_be_local(tool_server_url):

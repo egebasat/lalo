@@ -24,7 +24,6 @@ RUN playwright install --with-deps chromium \
 WORKDIR /app
 COPY agent_bot/ agent_bot/
 COPY sandbox/ sandbox/
-COPY mcp_servers/ mcp_servers/
 COPY config.yaml config.yaml
 
 RUN useradd -m -u 1000 agent && mkdir /data && chown agent /data

@@ -5,10 +5,9 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./agent_bot/tools.py:/app/agent_bot/tools.py:ro   # add tools without rebuilding
-      - ./mcp_servers:/app/mcp_servers:ro
       - ./data:/data
     env_file: [{ path: .env, required: false }]
     environment:
-      - NOTES_FILE=/data/notes.json
+      - NOTES_FILE=/data/notes.json   # the notes tools; ./data on the host
     shm_size: 1gb            # Chromium crashes with Docker's 64 MB /dev/shm default
     deploy: { resources: { limits: { memory: 2g } } }

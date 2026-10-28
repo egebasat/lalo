@@ -1,4 +1,3 @@
-import json
 import sys
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
@@ -10,12 +9,8 @@ from agent_bot.mcp_tools import connect_mcp_servers, expand_env, flatten_content
 from agent_bot.registry import Tool, ToolRegistry
 
 
-def notes_cfg(path):
-    return McpServerConfig(
-        command=sys.executable,
-        args=["-m", "mcp_servers.notes_server"],
-        env={"NOTES_FILE": str(path)},
-    )
+def echo_cfg():
+    return McpServerConfig(command=sys.executable, args=["-m", "tests.echo_mcp_server"])
 
 
 def test_expand_env():
@@ -24,31 +19,14 @@ def test_expand_env():
         expand_env("${NOPE}", {})
 
 
-async def test_notes_roundtrip_over_stdio(tmp_path):
+async def test_roundtrip_over_stdio():
     reg = ToolRegistry()
     async with AsyncExitStack() as stack:
-        st = await connect_mcp_servers({"notes": notes_cfg(tmp_path / "n.json")}, reg, stack, env={})
-        assert st[0].status == "connected" and st[0].tool_count == 3
-        r = await reg.call("add_note", {"text": "I like tea"}, 30)
-        assert not r.is_error and "Saved note" in r.content
-        r = await reg.call("list_notes", {}, 30)
-        assert "I like tea" in r.content
-        assert reg.get("list_notes").source == "mcp:notes"
-        r = await reg.call("search_notes", {"query": "TEA"}, 30)
-        assert "I like tea" in r.content
-        r = await reg.call("search_notes", {"query": "zzz"}, 30)
-        assert r.content == "No notes match 'zzz'."
-
-
-async def test_notes_reads_file_each_call(tmp_path):
-    f = tmp_path / "n.json"
-    reg = ToolRegistry()
-    async with AsyncExitStack() as stack:
-        await connect_mcp_servers({"notes": notes_cfg(f)}, reg, stack, env={})
-        await reg.call("add_note", {"text": "a"}, 30)
-        f.write_text(json.dumps([]))
-        r = await reg.call("list_notes", {}, 30)
-        assert r.content == "No notes yet."
+        st = await connect_mcp_servers({"echo": echo_cfg()}, reg, stack, env={})
+        assert st[0].status == "connected" and st[0].tool_count == 1
+        r = await reg.call("echo", {"text": "I like tea"}, 30)
+        assert not r.is_error and r.content == "I like tea"
+        assert reg.get("echo").source == "mcp:echo"
 
 
 async def test_mcp_error_result_is_verbatim():
@@ -99,17 +77,17 @@ async def test_disabled_server():
     assert st[0].status == "disabled" and st[0].tool_count == 0
 
 
-async def test_name_collision_prefixed(tmp_path):
+async def test_name_collision_prefixed():
     reg = ToolRegistry()
 
     async def f(**kw):
         return "py"
 
-    reg.register(Tool("list_notes", "", {"type": "object"}, f, "python"))
+    reg.register(Tool("echo", "", {"type": "object"}, f, "python"))
     async with AsyncExitStack() as stack:
-        await connect_mcp_servers({"notes": notes_cfg(tmp_path / "n.json")}, reg, stack, env={})
-        assert "notes__list_notes" in reg
-        assert reg.get("list_notes").source == "python"
+        await connect_mcp_servers({"echo": echo_cfg()}, reg, stack, env={})
+        assert "echo__echo" in reg
+        assert reg.get("echo").source == "python"
 
 
 def test_flatten_content():

@@ -36,8 +36,8 @@ which our code recognizes and runs for it.
 
 | Kind | Defined in | `source` shown in events |
 |---|---|---|
-| Python tools | `@tool` functions in `agent_bot/tools.py` (`web_search`, `fetch_page`, `get_current_time`, `calculator`) | `python` |
-| MCP tools | any connected MCP server, e.g. the bundled notes server | `mcp:<server>` (or `<server>/<origin>` when the server tags it) |
+| Python tools | `@tool` functions in `agent_bot/tools.py` (`web_search`, `fetch_page`, `get_current_time`, `calculator`, `add_note`, `list_notes`, `search_notes`) | `python` |
+| MCP tools | any connected MCP server, e.g. `fetch` | `mcp:<server>` (or `<server>/<origin>` when the server tags it) |
 
 For Python tools, `function_tool()` builds the JSON schema from the type hints
 and Google-style docstring (`transformers.utils.get_json_schema`), so the
@@ -54,10 +54,9 @@ transport:
 
 ```yaml
 mcp_servers:
-  local_notes:                       # stdio: we spawn the process
-    command: python
-    args: ["-m", "mcp_servers.notes_server"]
-    env: { NOTES_FILE: "${NOTES_FILE}" }
+  fetch:                             # stdio: we spawn the process
+    command: uvx
+    args: ["mcp-server-fetch"]
   some_remote:                       # Streamable HTTP: we connect to a URL
     url: https://example.com/mcp
     headers: { Authorization: "Bearer ${SOME_API_KEY}" }
@@ -75,7 +74,7 @@ There are two lists:
   that is a single `sandbox` entry pointing at the tool server on
   `http://127.0.0.1:8001/mcp`.
 - **`sandbox.mcp_servers`** — what the tool server (the Docker container) runs and
-  re-exposes, e.g. `local_notes`. This keeps tool code off the host.
+  re-exposes, e.g. `fetch`. This keeps tool code off the host.
 
 > The tool server and Docker setup are Task 13 in `tasks.md` and not built yet.
 > Today the CLI registers only the in-process Python tools.
@@ -101,5 +100,5 @@ From the agent loop's point of view, an MCP tool and a Python tool are the same.
 
 - **Python:** write a function with type hints and a docstring with `Args:` in
   `agent_bot/tools.py`, and decorate it with `@tool`.
-- **MCP:** add an entry under `mcp_servers` (or `sandbox.mcp_servers`). The bundled
-  `mcp_servers/notes_server.py` is a minimal example of writing your own.
+- **MCP:** to use an existing MCP server, add an entry under `sandbox.mcp_servers`.
+  Our own tools are always `@tool` functions, never separate MCP servers.

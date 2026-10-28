@@ -37,10 +37,6 @@ sandbox:
   port: 8001
   python_tools: true
   mcp_servers:
-    local_notes:
-      command: python
-      args: ["-m", "mcp_servers.notes_server"]
-      env: { NOTES_FILE: "${NOTES_FILE}" }
     fetch:
       command: uvx
       args: ["mcp-server-fetch"]
