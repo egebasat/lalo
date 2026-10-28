@@ -145,3 +145,32 @@ def test_replace_origin_duplicate_leaves_registry_unchanged():
     with pytest.raises(ValueError):
         reg.replace_origin("sandbox", [_t("c", "sandbox"), _t("c", "sandbox")])
     assert {t.name for t in reg.tools()} == {"a", "b"}
+
+
+def _sleeper(seconds: float, **fields) -> Tool:
+    async def func() -> str:
+        await asyncio.sleep(seconds)
+        return "done"
+    return Tool(name="slow", description="", parameters={"type": "object", "properties": {}},
+                func=func, source="python", **fields)
+
+
+async def test_tool_timeout_overrides_call_timeout():
+    reg = ToolRegistry()
+    reg.register(_sleeper(0.2, timeout_s=1))
+    r = await reg.call("slow", {}, timeout_s=0.05)
+    assert not r.is_error and r.content == "done"
+
+
+async def test_tool_timeout_applies_when_shorter():
+    reg = ToolRegistry()
+    reg.register(_sleeper(0.5, timeout_s=0.05))
+    r = await reg.call("slow", {}, timeout_s=5)
+    assert r.is_error and r.content.startswith("Tool 'slow' timed out after 0.05s")
+
+
+async def test_timeout_hint_appended():
+    reg = ToolRegistry()
+    reg.register(_sleeper(0.5, timeout_s=0.05, timeout_hint="Check first."))
+    r = await reg.call("slow", {}, timeout_s=5)
+    assert r.is_error and r.content.endswith(" Check first.")

@@ -25,6 +25,8 @@ class Tool:
     func: Callable[..., Awaitable[str]]
     source: str
     origin: str | None = None  # MCP server name; None for Python tools
+    timeout_s: float | None = None  # overrides the caller's limit for this tool
+    timeout_hint: str | None = None  # appended to the timeout message
 
 
 @dataclass
@@ -133,10 +135,12 @@ class ToolRegistry:
             return done(f"Invalid arguments for '{name}': {e.message}", True)
         except Exception as e:  # e.g. malformed schema or non-dict arguments
             return done(f"Invalid arguments for '{name}': {e}", True)
+        limit = t.timeout_s if t.timeout_s is not None else timeout_s
         try:
-            result = await asyncio.wait_for(t.func(**arguments), timeout_s)
+            result = await asyncio.wait_for(t.func(**arguments), limit)
         except asyncio.TimeoutError:
-            return done(f"Tool '{name}' timed out after {timeout_s:g}s", True)
+            hint = f" {t.timeout_hint}" if t.timeout_hint else ""
+            return done(f"Tool '{name}' timed out after {limit:g}s{hint}", True)
         except ToolError as e:
             return done(str(e), True)
         except Exception as e:
