@@ -73,6 +73,12 @@ class SandboxConfig(BaseModel):
     mcp_servers: dict[str, McpServerConfig] = {}
 
 
+class MacToolsConfig(BaseModel):
+    enabled: bool = False  # host only, macOS only
+    notes_folder: str = "Agent"  # name used when the folder is first created
+    timeout_s: float = 60  # per-call limit for Mac tools (cold app launch + permission prompt)
+
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     trace_dir: str | None = None
@@ -85,6 +91,7 @@ class AppConfig(BaseModel):
     tools: ToolsConfig = ToolsConfig()
     mcp_servers: dict[str, McpServerConfig] = {}
     sandbox: SandboxConfig = SandboxConfig()
+    mac_tools: MacToolsConfig = MacToolsConfig()
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
 

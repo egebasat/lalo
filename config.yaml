@@ -46,6 +46,12 @@ sandbox:
       headers: { Authorization: "Bearer ${SOME_API_KEY}" }
       enabled: false
 
+# Apple Notes and Mail tools, run in the agent server on the Mac (never in Docker).
+mac_tools:
+  enabled: true          # host only, macOS only
+  notes_folder: Agent    # name used when the folder is first created
+  timeout_s: 60          # per-call limit for Mac tools (cold app launch + permission prompt)
+
 server:
   host: 127.0.0.1
   port: 8000

@@ -56,3 +56,11 @@ def test_unknown_backend_rejected(tmp_path):
 def test_env_override_local_tools():
     cfg = load_config(REPO_CONFIG, env={"AGENT__AGENT__LOCAL_PYTHON_TOOLS": "false"})
     assert cfg.agent.local_python_tools is False
+
+
+def test_mac_tools_defaults():
+    from agent_bot.config import AppConfig, ModelConfig
+
+    mac = AppConfig(model=ModelConfig(path="m")).mac_tools
+    assert (mac.enabled, mac.notes_folder, mac.timeout_s) == (False, "Agent", 60)
+    assert load_config(REPO_CONFIG, env={}).mac_tools.enabled is True

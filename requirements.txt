@@ -15,3 +15,4 @@ mlx-lm>=0.32
 requests        # gui/, imported by the GUI tests
 markdown-it-py  # gui/renderer.py
 matplotlib      # gui/renderer.py (formula images)
+pyobjc-framework-Cocoa; sys_platform == "darwin"  # agent_bot/mac_tools.py
