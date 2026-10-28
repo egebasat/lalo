@@ -2,13 +2,10 @@ import pytest
 
 from agent_bot.registry import ToolRegistry
 from agent_bot.tools import (
-    add_note,
     calculator,
     fetch_page,
     get_current_time,
-    list_notes,
     register_python_tools,
-    search_notes,
     web_search,
 )
 
@@ -90,31 +87,8 @@ def test_register_python_tools():
     register_python_tools(reg)
     assert {t.name for t in reg.tools()} == {
         "web_search", "fetch_page", "get_current_time", "calculator",
-        "add_note", "list_notes", "search_notes",
     }
     assert all(t.source == "python" for t in reg.tools())
-
-
-@pytest.fixture
-def notes_file(tmp_path, monkeypatch):
-    path = tmp_path / "notes.json"
-    monkeypatch.setenv("NOTES_FILE", str(path))
-    return path
-
-
-def test_notes_roundtrip(notes_file):
-    assert list_notes() == "No notes yet."
-    assert add_note("I like tea") == "Saved note #1"
-    assert add_note("Buy milk") == "Saved note #2"
-    assert list_notes() == "1. I like tea\n2. Buy milk"
-    assert search_notes("TEA") == "1. I like tea"
-    assert search_notes("zzz") == "No notes match 'zzz'."
-
-
-def test_notes_reads_file_each_call(notes_file):
-    add_note("a")
-    notes_file.write_text("[]")
-    assert list_notes() == "No notes yet."
 
 
 ARTICLE = ("<html><body><article><h1>Careers at Example</h1>"

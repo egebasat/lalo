@@ -36,7 +36,7 @@ which our code recognizes and runs for it.
 
 | Kind | Defined in | `source` shown in events |
 |---|---|---|
-| Python tools | `@tool` functions in `agent_bot/tools.py` (`web_search`, `fetch_page`, `get_current_time`, `calculator`, `add_note`, `list_notes`, `search_notes`) | `python` |
+| Python tools | `@tool` functions in `agent_bot/tools.py` (`web_search`, `fetch_page`, `get_current_time`, `calculator`) | `python` |
 | MCP tools | any connected MCP server, e.g. `fetch` | `mcp:<server>` (or `<server>/<origin>` when the server tags it) |
 
 For Python tools, `function_tool()` builds the JSON schema from the type hints

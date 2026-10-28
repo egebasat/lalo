@@ -2,14 +2,10 @@
 from __future__ import annotations
 
 import ast
-import json
 import logging
 import math
 import operator
-import os
 from datetime import datetime
-from datetime import timezone as dt_timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -185,62 +181,6 @@ def calculator(expression: str) -> str:
         if math.isfinite(result) and result == int(result):
             result = int(result)
     return str(result)
-
-
-def _notes_path() -> Path:
-    """Read on every call, so tests and the container can point it elsewhere."""
-    return Path(os.environ.get("NOTES_FILE", "data/notes.json"))
-
-
-def _load_notes() -> list[dict]:
-    p = _notes_path()
-    if not p.exists():
-        return []
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _save_notes(notes: list[dict]) -> None:
-    p = _notes_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-@tool
-def add_note(text: str) -> str:
-    """Save a note for later.
-
-    Args:
-        text: The note to save.
-    """
-    notes = _load_notes()
-    note_id = max((n["id"] for n in notes), default=0) + 1
-    notes.append(
-        {"id": note_id, "text": text, "created_at": datetime.now(dt_timezone.utc).isoformat()}
-    )
-    _save_notes(notes)
-    return f"Saved note #{note_id}"
-
-
-@tool
-def list_notes() -> str:
-    """List all saved notes."""
-    notes = _load_notes()
-    if not notes:
-        return "No notes yet."
-    return "\n".join(f"{n['id']}. {n['text']}" for n in notes)
-
-
-@tool
-def search_notes(query: str) -> str:
-    """Search saved notes (case-insensitive substring match).
-
-    Args:
-        query: Text to look for in the notes.
-    """
-    hits = [n for n in _load_notes() if query.lower() in n["text"].lower()]
-    if not hits:
-        return f"No notes match '{query}'."
-    return "\n".join(f"{n['id']}. {n['text']}" for n in hits)
 
 
 def register_python_tools(registry: ToolRegistry) -> None:

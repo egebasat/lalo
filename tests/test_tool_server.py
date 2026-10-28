@@ -88,7 +88,7 @@ def sandbox(url: str) -> dict[str, McpServerConfig]:
 def test_health_lists_counts(start_server):
     body = start_server(sandbox_cfg()).health()
     assert body["status"] == "ok"
-    assert body["tools"] == 8
+    assert body["tools"] == 5
     assert body["mcp_servers"][0]["name"] == "echo"
     assert body["mcp_servers"][0]["status"] == "connected"
 
@@ -96,9 +96,9 @@ def test_health_lists_counts(start_server):
 async def test_host_sees_sandbox_tools_with_sources(tool_server_url):
     reg = ToolRegistry()
     async with turn_tools(sandbox(tool_server_url), reg) as statuses:
-        assert statuses[0].status == "connected" and statuses[0].tool_count == 8
+        assert statuses[0].status == "connected" and statuses[0].tool_count == 5
         assert reg.get("calculator").source == "sandbox/python"
-        assert reg.get("add_note").source == "sandbox/python"
+        assert reg.get("web_search").source == "sandbox/python"
         assert reg.get("echo").source == "sandbox/mcp:echo"
         assert all(t.origin == "sandbox" for t in reg.tools())
 
@@ -164,7 +164,7 @@ async def test_tools_refresh_per_turn(start_server):
     first = start_server(sandbox_cfg())
     reg = ToolRegistry()
     async with turn_tools(sandbox(first.url), reg):
-        assert len(reg.tools()) == 8
+        assert len(reg.tools()) == 5
     first.stop()  # like `docker compose restart` with a changed config
     second = start_server(sandbox_cfg(python_tools=False), port=first.port)
     async with turn_tools(sandbox(second.url), reg):
@@ -179,7 +179,7 @@ def test_broken_inner_server_does_not_stop_sandbox(start_server):
     assert status["broken"]["status"] == "failed"
     assert status["broken"]["error"]
     assert status["echo"]["status"] == "connected"
-    assert body["tools"] == 8
+    assert body["tools"] == 5
 
 
 async def test_host_header_must_be_local(tool_server_url):
