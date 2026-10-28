@@ -10,9 +10,12 @@ Notes tools only ever touch one folder, pinned by its id in data/mac_tools.json.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
+import re
 import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from agent_bot.config import MacToolsConfig
@@ -42,6 +45,88 @@ end run""",
     end tell
 end run""",
 }
+
+# Handlers appended to the scripts that return notes. A record is: id, name, year, month,
+# day, seconds since midnight, plaintext; joined by FS, records by RS. Dates go as numbers
+# because AppleScript's date-to-text depends on the user's locale.
+_RECORDS = """
+
+on clean(t)
+    set AppleScript's text item delimiters to {character id 30, character id 31}
+    set parts to text items of t
+    set AppleScript's text item delimiters to ""
+    return parts as text
+end clean
+
+on packNotes(idList, nameList, dateList, textList)
+    set FS to character id 31
+    set out to {}
+    repeat with i from 1 to count of idList
+        set d to item i of dateList
+        set end of out to (item i of idList) & FS & my clean(item i of nameList) & FS & (year of d as text) & FS & ((month of d as integer) as text) & FS & (day of d as text) & FS & (time of d as text) & FS & my clean(item i of textList)
+    end repeat
+    set AppleScript's text item delimiters to (character id 30)
+    set joined to out as text
+    set AppleScript's text item delimiters to ""
+    return joined
+end packNotes"""
+
+# Every script that takes a note id looks it up *inside* the pinned folder
+# (`note id X of folder id F`), which fails with -1728 for a note anywhere else. That
+# lookup is the folder boundary. Reading `name` first forces it before any write.
+SCRIPTS.update({
+    "notes_create": """on run argv
+    tell application "Notes"
+        set n to make new note at folder id (item 1 of argv) with properties {body:(item 2 of argv)}
+        return (id of n) & (character id 31) & my clean(name of n)
+    end tell
+end run""" + _RECORDS,
+    "notes_list": """on run argv
+    tell application "Notes"
+        set f to folder id (item 1 of argv)
+        set idList to id of notes of f
+        set nameList to name of notes of f
+        set dateList to modification date of notes of f
+        set textList to plaintext of notes of f
+    end tell
+    return my packNotes(idList, nameList, dateList, textList)
+end run""" + _RECORDS,
+    "notes_search": """on run argv
+    set q to item 2 of argv
+    tell application "Notes"
+        set f to folder id (item 1 of argv)
+        set idList to id of (notes of f whose name contains q or plaintext contains q)
+        set nameList to name of (notes of f whose name contains q or plaintext contains q)
+        set dateList to modification date of (notes of f whose name contains q or plaintext contains q)
+        set textList to plaintext of (notes of f whose name contains q or plaintext contains q)
+    end tell
+    return my packNotes(idList, nameList, dateList, textList)
+end run""" + _RECORDS,
+    "notes_read": """on run argv
+    tell application "Notes"
+        set n to note id (item 1 of argv) of folder id (item 2 of argv)
+        set noteName to name of n
+        set r to my packNotes({id of n}, {noteName}, {modification date of n}, {plaintext of n})
+    end tell
+    return r
+end run""" + _RECORDS,
+    "notes_set_body": """on run argv
+    tell application "Notes"
+        set n to note id (item 1 of argv) of folder id (item 2 of argv)
+        set noteName to name of n
+        set body of n to (item 3 of argv)
+        return noteName
+    end tell
+end run""",
+    "notes_append": """on run argv
+    tell application "Notes"
+        set n to note id (item 1 of argv) of folder id (item 2 of argv)
+        set noteName to name of n
+        set body of n to (body of n) & (item 3 of argv)
+        return noteName
+    end tell
+end run""",
+})
 
 # Scripts whose first argument is a note id looked up inside the pinned folder.
 _NOTE_ID_SCRIPTS = {"notes_read", "notes_set_body", "notes_append"}
@@ -150,3 +235,145 @@ def notes_folder_id() -> str:
         _state_path.parent.mkdir(parents=True, exist_ok=True)
         _state_path.write_text(json.dumps({"notes_folder_id": _folder_id}), encoding="utf-8")
         return _folder_id
+
+
+# --- Notes tools -------------------------------------------------------------------
+
+_NOTE_ID = re.compile(r"^x-coredata://.+/ICNote/p\d+$")
+PREVIEW_CHARS = 200
+
+
+def _require(param: str, value: str) -> None:
+    if not value.strip():
+        raise ToolError(f"{param} must not be empty.")
+
+
+def _check_id(note_id: str) -> None:
+    if not _NOTE_ID.match(note_id):
+        raise ToolError("That isn't a Notes id; use the id from list_apple_notes or search_apple_notes.")
+
+
+def _note_html(title: str | None, text: str) -> str:
+    """Note body HTML: the title as a heading (Notes names the note after it), one div per line."""
+    head = f"<h1>{html.escape(title)}</h1>" if title is not None else ""
+    lines = text.rstrip("\n").split("\n")
+    return head + "".join(f"<div>{html.escape(line)}</div>" if line else "<div><br></div>"
+                          for line in lines)
+
+
+def _parse(raw: str) -> list[dict]:
+    notes = []
+    for record in filter(None, raw.split(RS)):
+        note_id, name, y, mo, d, secs, text = record.split(FS)
+        modified = datetime(int(y), int(mo), int(d)) + timedelta(seconds=int(secs))
+        notes.append({"id": note_id, "title": name, "modified": modified,
+                      "text": _without_title(name, text)})
+    return notes
+
+
+def _without_title(name: str, text: str) -> str:
+    lines = text.split("\n")
+    if lines and lines[0].strip() == name.strip():
+        lines = lines[1:]
+    return "\n".join(lines).strip("\n")
+
+
+def _iso(modified: datetime) -> str:
+    return modified.isoformat(timespec="minutes")
+
+
+def _summaries(raw: str, max_results: int) -> list[str]:
+    notes = sorted(_parse(raw), key=lambda n: n["modified"], reverse=True)
+    n = max(1, min(50, max_results))
+    return [f"{x['id']} | {x['title']} | {_iso(x['modified'])} | "
+            f"{x['text'].replace(chr(10), ' ')[:PREVIEW_CHARS]}" for x in notes[:n]]
+
+
+def create_apple_note(title: str, body: str) -> str:
+    """Create a new note in your own folder in Apple Notes. Returns the note's id.
+
+    Only notes in your own Notes folder exist for these tools; the user's other notes
+    are not reachable.
+
+    Args:
+        title: Short title, e.g. 'Packing list'.
+        body: The note's text; use one line per item for lists.
+    """
+    _require("title", title)
+    _require("body", body)
+    out = _call("notes_create", notes_folder_id(), _note_html(title, body))
+    note_id, name = out.split(FS)
+    return f'Created note "{name}" (id: {note_id}).'
+
+
+def list_apple_notes(max_results: int = 20) -> str:
+    """List the notes in your own Apple Notes folder, most recently changed first.
+
+    Each line is: id | title | last modified | start of the text.
+
+    Args:
+        max_results: How many notes to return, 1-50.
+    """
+    lines = _summaries(_call("notes_list", notes_folder_id()), max_results)
+    return "\n".join(lines) if lines else "The Agent folder has no notes yet."
+
+
+def search_apple_notes(query: str, max_results: int = 10) -> str:
+    """Find notes in your own Apple Notes folder whose title or text contains the query.
+
+    Use this to find a note's id before reading or changing it.
+
+    Args:
+        query: Word or phrase to look for (case-insensitive), e.g. 'packing'.
+        max_results: How many notes to return, 1-50.
+    """
+    _require("query", query)
+    lines = _summaries(_call("notes_search", notes_folder_id(), query), max_results)
+    return "\n".join(lines) if lines else f"No notes in the Agent folder match '{query}'."
+
+
+def read_apple_note(note_id: str) -> str:
+    """Read the full text of one note from your own Apple Notes folder.
+
+    Args:
+        note_id: The id from list_apple_notes or search_apple_notes.
+    """
+    _check_id(note_id)
+    note = _parse(_call("notes_read", note_id, notes_folder_id()))[0]
+    return f"Title: {note['title']}\nModified: {_iso(note['modified'])}\n\n{note['text']}"
+
+
+def update_apple_note(note_id: str, body: str) -> str:
+    """Replace the whole text of a note in your own Apple Notes folder; the title stays.
+
+    To add items to a note, use append_to_apple_note instead.
+
+    Args:
+        note_id: The id from list_apple_notes or search_apple_notes.
+        body: The new full text, without the title.
+    """
+    _check_id(note_id)
+    _require("body", body)
+    folder = notes_folder_id()
+    title = _parse(_call("notes_read", note_id, folder))[0]["title"]
+    name = _call("notes_set_body", note_id, folder, _note_html(title, body))
+    return f'Updated note "{name}".'
+
+
+def append_to_apple_note(note_id: str, text: str) -> str:
+    """Add lines to the end of a note in your own Apple Notes folder.
+
+    Prefer this for "add X to my list": it keeps everything already in the note.
+
+    Args:
+        note_id: The id from list_apple_notes or search_apple_notes.
+        text: The text to add; one line per item.
+    """
+    _check_id(note_id)
+    _require("text", text)
+    name = _call("notes_append", note_id, notes_folder_id(), _note_html(None, text))
+    return f'Added to note "{name}".'
+
+
+NOTES_TOOLS = [create_apple_note, list_apple_notes, search_apple_notes,
+               read_apple_note, update_apple_note, append_to_apple_note]
