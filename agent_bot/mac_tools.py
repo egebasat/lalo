@@ -257,6 +257,8 @@ def _check_id(note_id: str) -> None:
 def _note_html(title: str | None, text: str) -> str:
     """Note body HTML: the title as a heading (Notes names the note after it), one div per line."""
     head = f"<h1>{html.escape(title)}</h1>" if title is not None else ""
+    if not text.strip():
+        return head
     lines = text.rstrip("\n").split("\n")
     return head + "".join(f"<div>{html.escape(line)}</div>" if line else "<div><br></div>"
                           for line in lines)
@@ -290,7 +292,7 @@ def _summaries(raw: str, max_results: int) -> list[str]:
             f"{x['text'].replace(chr(10), ' ')[:PREVIEW_CHARS]}" for x in notes[:n]]
 
 
-def create_apple_note(title: str, body: str) -> str:
+def create_apple_note(title: str, body: str = "") -> str:
     """Create a new note in your own folder in Apple Notes. Returns the note's id.
 
     Only notes in your own Notes folder exist for these tools; the user's other notes
@@ -298,10 +300,10 @@ def create_apple_note(title: str, body: str) -> str:
 
     Args:
         title: Short title, e.g. 'Packing list'.
-        body: The note's text; use one line per item for lists.
+        body: The note's text, one line per item for lists. Leave it empty for a note
+            with only a title; items can be added later with append_to_apple_note.
     """
     _require("title", title)
-    _require("body", body)
     out = _call("notes_create", notes_folder_id(), _note_html(title, body))
     note_id, name = out.split(FS)
     return f'Created note "{name}" (id: {note_id}).'

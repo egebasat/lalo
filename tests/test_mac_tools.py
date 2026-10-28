@@ -209,6 +209,15 @@ def test_bad_note_id_rejected_without_script(notes):
     assert "notes_read" not in notes.names()
 
 
+def test_create_title_only_note(notes):
+    notes.responses["notes_create"] = NID + FS + "todo list for november"
+    assert create_apple_note("todo list for november") == (
+        f'Created note "todo list for november" (id: {NID}).')
+    assert notes.calls[-1] == ("notes_create", ("F", "<h1>todo list for november</h1>"))
+    create_apple_note("T", "  \n")
+    assert notes.calls[-1] == ("notes_create", ("F", "<h1>T</h1>"))
+
+
 def test_empty_text_rejected(notes):
     with pytest.raises(ToolError, match="title must not be empty"):
         create_apple_note("  ", "x")
